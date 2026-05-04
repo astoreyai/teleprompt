@@ -73,13 +73,6 @@ function MiniTransport({ state }: { state: AppState }) {
     <div className="overlay__mini">
       <button
         className="overlay__btn"
-        title="Restart from top"
-        onClick={() => window.api.patchState({ scrollPosition: 0, playing: false })}
-      >
-        ↺
-      </button>
-      <button
-        className="overlay__btn"
         title={state.playing ? 'Pause' : 'Play'}
         onClick={() => window.api.togglePlay()}
       >
@@ -89,7 +82,7 @@ function MiniTransport({ state }: { state: AppState }) {
         className="overlay__btn"
         title="Open controls"
         aria-label="Open controls window"
-        onClick={() => window.api.toggleControls()}
+        onClick={() => window.api.focusControls()}
       >
         ⚙
       </button>
