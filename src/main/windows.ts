@@ -1,6 +1,7 @@
 import { BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { logCrash } from './log.js'
 import { getState, setState } from './store.js'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
@@ -54,6 +55,7 @@ export function createOverlay(): BrowserWindow {
   win.setIgnoreMouseEvents(clickThrough, { forward: true })
 
   hardenWebContents(win)
+  attachCrashRecovery(win, 'overlay')
 
   win.on('moved', () => persistBounds('overlayBounds', win))
   win.on('resized', () => persistBounds('overlayBounds', win))
@@ -85,6 +87,7 @@ export function createControls(): BrowserWindow {
   })
 
   hardenWebContents(win)
+  attachCrashRecovery(win, 'controls')
 
   win.on('moved', () => persistBounds('controlsBounds', win))
   win.on('resized', () => persistBounds('controlsBounds', win))
@@ -103,6 +106,39 @@ function hardenWebContents(win: BrowserWindow) {
     const allowed = RENDERER_DEV ?? 'file://'
     if (!url.startsWith(allowed)) event.preventDefault()
   })
+}
+
+// If a renderer process dies (the recoverable crash class — the main process
+// survives), reload the window so it comes back. The renderer re-reads state
+// via getState() on mount, which carries the live scrollPosition, so it
+// resumes in place. Capped to avoid a tight reload loop if it crashes on load.
+const RELOAD_MAX = 5
+const RELOAD_WINDOW_MS = 60_000
+
+function attachCrashRecovery(win: BrowserWindow, label: 'overlay' | 'controls') {
+  let attempts: number[] = []
+  win.webContents.on('render-process-gone', (_event, details) => {
+    logCrash(
+      `render-process-gone[${label}] reason=${details.reason} exitCode=${details.exitCode}`,
+    )
+    if (win.isDestroyed()) return
+    const now = Date.now()
+    attempts = attempts.filter((t) => now - t < RELOAD_WINDOW_MS)
+    if (attempts.length >= RELOAD_MAX) {
+      logCrash(`render-process-gone[${label}] hit ${RELOAD_MAX} reloads/${RELOAD_WINDOW_MS}ms; recreating`)
+      attempts = []
+      if (label === 'overlay') recreateOverlay()
+      return
+    }
+    attempts.push(now)
+    try {
+      win.webContents.reload()
+    } catch (e) {
+      logCrash(`reload failed[${label}]: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  })
+  win.webContents.on('unresponsive', () => logCrash(`unresponsive[${label}]`))
+  win.webContents.on('responsive', () => logCrash(`responsive[${label}] (recovered)`))
 }
 
 function loadRoute(win: BrowserWindow, route: 'overlay' | 'controls') {

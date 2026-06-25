@@ -1,6 +1,6 @@
 {
   "name": "teleprompt",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Transparent screen-overlay teleprompter with voice pacing, cue points, and presentation drive",
   "main": "out/main/index.js",
   "type": "module",

@@ -1,8 +1,9 @@
-import { app, BrowserWindow, session } from 'electron'
+import { app, BrowserWindow, crashReporter, session } from 'electron'
 import { existsSync } from 'node:fs'
 import { extname, isAbsolute, resolve } from 'node:path'
 import { registerHotkeys, unregisterHotkeys } from './hotkeys.js'
 import { loadPathOnStartup, registerIpc } from './ipc.js'
+import { logCrash } from './log.js'
 import { flushPersist } from './store.js'
 import {
   applyOverlayEffects,
@@ -12,6 +13,30 @@ import {
   stopCursorPoll,
   stopTopReassertPoll,
 } from './windows.js'
+
+// --- Stability hardening (must run before app 'ready') ---
+
+// GPU/compositor faults are the most common native-crash source for Electron
+// on Linux, and a teleprompter gains nothing from hardware compositing.
+// Disable it by default; TELEPROMPT_HWACCEL=1 forces it back on (debug/compare).
+if (!process.env.TELEPROMPT_HWACCEL) {
+  app.disableHardwareAcceleration()
+}
+
+// Write local minidumps (never uploaded) so hard crashes are diagnosable.
+try {
+  crashReporter.start({ uploadToServer: false })
+} catch (e) {
+  logCrash(`crashReporter.start failed: ${e instanceof Error ? e.message : String(e)}`)
+}
+
+// Log unexpected JS faults instead of letting a stray throw take the app down.
+process.on('uncaughtException', (err) => {
+  logCrash(`uncaughtException: ${err?.stack ?? String(err)}`)
+})
+process.on('unhandledRejection', (reason) => {
+  logCrash(`unhandledRejection: ${reason instanceof Error ? reason.stack : String(reason)}`)
+})
 
 const ALLOWED_EXTS = new Set([
   '.txt',

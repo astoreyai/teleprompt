@@ -45,14 +45,22 @@ const defaults: AppState = {
   controlsBounds: { x: 100, y: 750, width: 900, height: 400 },
 }
 
-type Persisted = Omit<AppState, 'files' | 'scrollPosition' | 'playing' | 'editMode'> & {
+// scrollPosition IS persisted so a crash/restart resumes where the lecture
+// left off. playing/editMode are intentionally dropped (always resume paused
+// and out of edit mode). files are rehydrated from filePaths.
+type Persisted = Omit<AppState, 'files' | 'playing' | 'editMode'> & {
   filePaths: string[]
 }
 
+function clamp01(n: unknown): number {
+  return typeof n === 'number' && Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0
+}
+
 function persistedFrom(s: AppState): Persisted {
-  const { files: _f, scrollPosition: _s, playing: _p, editMode: _e, ...rest } = s
+  const { files: _f, playing: _p, editMode: _e, ...rest } = s
   return {
     ...rest,
+    scrollPosition: clamp01(s.scrollPosition),
     filePaths: s.files.map((f) => f.path).filter((p) => typeof p === 'string' && !p.startsWith('mem://')),
   }
 }
@@ -110,7 +118,8 @@ function buildRuntime(p: Persisted): AppState {
     ...rest,
     files,
     currentFileIndex: clampIndex(rest.currentFileIndex ?? 0, files.length),
-    scrollPosition: 0,
+    // Resume at the saved position, but only if a script is actually loaded.
+    scrollPosition: files.length > 0 ? clamp01(rest.scrollPosition) : 0,
     playing: false,
     editMode: false,
   }
