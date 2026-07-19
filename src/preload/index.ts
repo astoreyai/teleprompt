@@ -1,76 +1,91 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppState, HotkeyCommand, ScriptFile } from '../shared/types.js'
+import type { AppSnapshot, DocumentContent, DocumentFormat, DocumentId, OverlaySnapshot } from '../shared/contracts.js'
+import type { ControlsApi, OverlayApi, PreferencePatch } from '../shared/ipc.js'
+import type { HotkeyCommand } from '../shared/types.js'
 
-const api = {
-  getState: (): Promise<AppState> => ipcRenderer.invoke('state:get'),
-  patchState: (patch: Partial<AppState>): Promise<AppState> =>
-    ipcRenderer.invoke('state:patch', patch),
-  openFiles: (): Promise<{ loaded: ScriptFile[]; errors: { path: string; error: string }[] }> =>
-    ipcRenderer.invoke('files:open'),
-  loadFromPath: (
-    path: string,
-  ): Promise<{ ok: true; file: ScriptFile } | { ok: false; error: string }> =>
-    ipcRenderer.invoke('files:loadPath', path),
-  loadFromContent: (name: string, content: string, path?: string): Promise<ScriptFile> =>
-    ipcRenderer.invoke('files:loadContent', name, content, path),
-  removeFile: (index: number): Promise<void> => ipcRenderer.invoke('files:remove', index),
-  selectFile: (index: number): Promise<void> => ipcRenderer.invoke('files:select', index),
-  reloadCurrent: (): Promise<void> => ipcRenderer.invoke('files:reload'),
-  togglePlay: (): Promise<void> => ipcRenderer.invoke('playback:toggle'),
-  setScrollPosition: (position: number): Promise<void> =>
-    ipcRenderer.invoke('scroll:set', position),
-  updateContent: (index: number, content: string): Promise<void> =>
-    ipcRenderer.invoke('files:updateContent', index, content),
-  saveCurrent: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('files:save'),
-  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
-  getHotkeyStatus: (): Promise<{ failed: string[] }> => ipcRenderer.invoke('hotkeys:status'),
-  getPlatformInfo: (): Promise<{
-    platform: NodeJS.Platform
-    displayServer: string
-    contentProtectionSupported: boolean
-  }> => ipcRenderer.invoke('platform:info'),
-  getPresentationStatus: (): Promise<{ ok: boolean; reason?: string }> =>
-    ipcRenderer.invoke('presentation:status'),
-  focusControls: (): Promise<void> => ipcRenderer.invoke('controls:focus'),
-  toggleControls: (): Promise<void> => ipcRenderer.invoke('controls:toggle'),
-  reportOverlayGeom: (geom: { textH: number; viewportH: number }): Promise<void> =>
-    ipcRenderer.invoke('overlay:reportGeom', geom),
-  dragStart: (sx: number, sy: number): Promise<void> => ipcRenderer.invoke('drag:start', sx, sy),
-  dragUpdate: (sx: number, sy: number): Promise<void> => ipcRenderer.invoke('drag:update', sx, sy),
-  dragEnd: (): Promise<void> => ipcRenderer.invoke('drag:end'),
-  resizeStart: (sx: number, sy: number, edge: string): Promise<void> =>
-    ipcRenderer.invoke('resize:start', sx, sy, edge),
-  resizeUpdate: (sx: number, sy: number): Promise<void> =>
-    ipcRenderer.invoke('resize:update', sx, sy),
-  resizeEnd: (): Promise<void> => ipcRenderer.invoke('resize:end'),
-  onOverlayGeom: (cb: (geom: { textH: number; viewportH: number }) => void) => {
-    const listener = (_: unknown, g: { textH: number; viewportH: number }) => cb(g)
-    ipcRenderer.on('overlay:geom', listener)
-    return () => ipcRenderer.off('overlay:geom', listener)
-  },
-  resetSettings: (): Promise<AppState> => ipcRenderer.invoke('settings:reset'),
-  exportSettings: (): Promise<{ ok: boolean; path?: string; error?: string }> =>
-    ipcRenderer.invoke('settings:export'),
-  importSettings: (): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('settings:import'),
-  getAbout: (): Promise<{
-    appVersion: string
-    electronVersion: string
-    nodeVersion: string
-    storePath: string
-  }> => ipcRenderer.invoke('settings:about'),
-  onState: (cb: (state: AppState) => void) => {
-    const listener = (_: unknown, state: AppState) => cb(state)
-    ipcRenderer.on('state:update', listener)
-    return () => ipcRenderer.off('state:update', listener)
-  },
-  onCommand: (cb: (cmd: HotkeyCommand) => void) => {
-    const listener = (_: unknown, cmd: HotkeyCommand) => cb(cmd)
-    ipcRenderer.on('command', listener)
-    return () => ipcRenderer.off('command', listener)
-  },
+const surface = process.argv
+  .find((argument) => argument.startsWith('--teleprompt-surface='))
+  ?.split('=')[1]
+
+const on = <T>(channel: string, callback: (payload: T) => void): (() => void) => {
+  const listener = (_event: Electron.IpcRendererEvent, payload: T) => callback(payload)
+  ipcRenderer.on(channel, listener)
+  return () => ipcRenderer.off(channel, listener)
 }
 
-contextBridge.exposeInMainWorld('api', api)
+if (surface === 'controls') {
+  const api: ControlsApi = {
+    bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
+    openFiles: () => ipcRenderer.invoke('documents:open'),
+    openRecent: (path) => ipcRenderer.invoke('documents:openRecent', { path }),
+    openDroppedFile: (file) => {
+      const path = webUtils.getPathForFile(file)
+      if (!path) return Promise.resolve({ ok: false, error: 'dropped file has no local path' })
+      return ipcRenderer.invoke('documents:openDropped', { path })
+    },
+    createDocument: (name, content, format) =>
+      ipcRenderer.invoke('documents:create', { name, content, format }),
+    selectDocument: (id) => ipcRenderer.invoke('documents:select', { id }),
+    removeDocument: (id, discardDirty) =>
+      ipcRenderer.invoke('documents:remove', { id, discardDirty }),
+    updateDocument: (id, expectedRevision, content) =>
+      ipcRenderer.invoke('documents:update', { id, expectedRevision, content }),
+    saveDocument: (id, saveAs = false) => ipcRenderer.invoke('documents:save', { id, saveAs }),
+    reloadDocument: (id, discardDirty) =>
+      ipcRenderer.invoke('documents:reload', { id, discardDirty }),
+    togglePlayback: () => ipcRenderer.invoke('playback:toggle'),
+    restartPlayback: () => ipcRenderer.invoke('playback:restart'),
+    seek: (position) => ipcRenderer.invoke('playback:seek', position),
+    updatePreferences: (patch: PreferencePatch) => ipcRenderer.invoke('preferences:update', patch),
+    setOverlayVisible: (visible) => ipcRenderer.invoke('overlay:setVisible', visible),
+    requestVoice: (enabled) => ipcRenderer.invoke('voice:request', enabled),
+    grantVoiceConsent: () => ipcRenderer.invoke('voice:grantConsent'),
+    revokeVoiceConsent: () => ipcRenderer.invoke('voice:revokeConsent'),
+    reportVoiceStatus: (status, error) => ipcRenderer.invoke('voice:status', { status, error }),
+    setClickerArmed: (enabled) => ipcRenderer.invoke('clicker:setArmed', enabled),
+    setPresentationArmed: (enabled) =>
+      ipcRenderer.invoke('presentation:setArmed', enabled),
+    updateHotkeys: (bindings: Record<HotkeyCommand, string>) =>
+      ipcRenderer.invoke('hotkeys:update', bindings),
+    getHotkeyStatus: () => ipcRenderer.invoke('hotkeys:status'),
+    getPlatformInfo: () => ipcRenderer.invoke('platform:info'),
+    getPresentationStatus: () => ipcRenderer.invoke('presentation:status'),
+    resetPreferences: () => ipcRenderer.invoke('preferences:reset'),
+    clearRecentFiles: () => ipcRenderer.invoke('preferences:clearRecent'),
+    exportPreferences: () => ipcRenderer.invoke('preferences:export'),
+    importPreferences: () => ipcRenderer.invoke('preferences:import'),
+    getAbout: () => ipcRenderer.invoke('preferences:about'),
+    onSnapshot: (callback) => on<AppSnapshot>('snapshot:changed', callback),
+    onActiveDocument: (callback) => on<DocumentContent | null>('document:changed', callback),
+    onProgress: (callback) => on<number>('playback:progress', callback),
+    onOverlayGeometry: (callback) =>
+      on<{ textH: number; viewportH: number }>('overlay:geometry', callback),
+  }
+  contextBridge.exposeInMainWorld('controlsApi', api)
+} else if (surface === 'overlay') {
+  const api: OverlayApi = {
+    bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
+    togglePlayback: () => ipcRenderer.invoke('playback:toggle'),
+    focusControls: () => ipcRenderer.invoke('controls:focus'),
+    checkpoint: (input) => ipcRenderer.invoke('playback:checkpoint', input),
+    reportGeometry: (geometry) => ipcRenderer.invoke('overlay:reportGeometry', geometry),
+    dragStart: (screenX, screenY) =>
+      ipcRenderer.invoke('overlay:dragStart', { screenX, screenY }),
+    dragUpdate: (screenX, screenY) =>
+      ipcRenderer.invoke('overlay:dragUpdate', { screenX, screenY }),
+    dragEnd: () => ipcRenderer.invoke('overlay:dragEnd'),
+    resizeStart: (screenX, screenY, edge) =>
+      ipcRenderer.invoke('overlay:resizeStart', { screenX, screenY, edge }),
+    resizeUpdate: (screenX, screenY) =>
+      ipcRenderer.invoke('overlay:resizeUpdate', { screenX, screenY }),
+    resizeEnd: () => ipcRenderer.invoke('overlay:resizeEnd'),
+    openEditor: () => ipcRenderer.invoke('overlay:openEditor'),
+    onSnapshot: (callback) => on<OverlaySnapshot>('snapshot:changed', callback),
+    onActiveDocument: (callback) => on<DocumentContent | null>('document:changed', callback),
+  }
+  contextBridge.exposeInMainWorld('overlayApi', api)
+} else {
+  throw new Error('unknown Teleprompt preload surface')
+}
 
-export type Api = typeof api
+export type { ControlsApi, OverlayApi, DocumentContent, DocumentFormat, DocumentId }

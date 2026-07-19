@@ -79,6 +79,11 @@ body,
   color: white;
 }
 
+.overlay__btn:focus-visible {
+  outline: 2px solid #8bc1ff;
+  outline-offset: 1px;
+}
+
 .overlay__speed {
   font-family: ui-monospace, monospace;
   font-size: 10px;
@@ -415,5 +420,38 @@ body,
   100% {
     transform: scale(0.9);
     opacity: 0.6;
+  }
+}
+
+.overlay__fatal,
+.renderer-error--overlay {
+  box-sizing: border-box;
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  padding: 24px;
+  background: rgba(15, 17, 21, 0.96);
+  color: #fff;
+  font-family: system-ui, sans-serif;
+  text-align: center;
+  user-select: text;
+}
+
+.renderer-error--overlay button {
+  justify-self: center;
+  border: 1px solid #8bc1ff;
+  border-radius: 6px;
+  background: #2d6fc4;
+  color: white;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay__drag,
+  .overlay__countdown {
+    transition: none;
+    animation: none;
   }
 }

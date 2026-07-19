@@ -1,88 +1,89 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import { marked } from 'marked'
 import { parseCues, stripCues } from '../../../shared/cues'
-import type { AppState } from '../../../shared/types'
+import type { DocumentContent, OverlayDocumentMeta, OverlaySnapshot } from '../../../shared/contracts'
+import { countWords } from '../../../shared/text'
+import { PlaybackCheckpointGate } from '../shared/checkpoint-gate'
+import { shouldRenderMarkdown } from '../shared/render-policy'
 
 marked.setOptions({ gfm: true, breaks: true, async: false })
 
+type ResizeEdge = 'se' | 'sw' | 'ne' | 'nw' | 'n' | 's' | 'e' | 'w'
+
 function useWindowDrag() {
-  return useMemo(() => {
-    const onMouseDown = (e: React.MouseEvent) => {
-      if (e.button !== 0) return
-      e.preventDefault()
-      window.api.dragStart(e.screenX, e.screenY)
-      const onMove = (ev: MouseEvent) => window.api.dragUpdate(ev.screenX, ev.screenY)
+  return useMemo(
+    () => (event: React.MouseEvent) => {
+      if (event.button !== 0) return
+      event.preventDefault()
+      void window.overlayApi.dragStart(event.screenX, event.screenY)
+      const onMove = (next: MouseEvent) => {
+        void window.overlayApi.dragUpdate(next.screenX, next.screenY)
+      }
       const onUp = () => {
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
-        window.api.dragEnd()
+        void window.overlayApi.dragEnd()
       }
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
-    }
-    return onMouseDown
-  }, [])
+    },
+    [],
+  )
 }
 
-function useWindowResize(edge: 'se' | 'sw' | 'ne' | 'nw' | 'n' | 's' | 'e' | 'w') {
-  return useMemo(() => {
-    const onMouseDown = (e: React.MouseEvent) => {
-      if (e.button !== 0) return
-      e.preventDefault()
-      e.stopPropagation()
-      window.api.resizeStart(e.screenX, e.screenY, edge)
-      const onMove = (ev: MouseEvent) => window.api.resizeUpdate(ev.screenX, ev.screenY)
+function useWindowResize(edge: ResizeEdge) {
+  return useMemo(
+    () => (event: React.MouseEvent) => {
+      if (event.button !== 0) return
+      event.preventDefault()
+      event.stopPropagation()
+      void window.overlayApi.resizeStart(event.screenX, event.screenY, edge)
+      const onMove = (next: MouseEvent) => {
+        void window.overlayApi.resizeUpdate(next.screenX, next.screenY)
+      }
       const onUp = () => {
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
-        window.api.resizeEnd()
+        void window.overlayApi.resizeEnd()
       }
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
-    }
-    return onMouseDown
-  }, [edge])
+    },
+    [edge],
+  )
 }
 
-const DISPATCH_INTERVAL_MS = 50
-const ECHO_THRESHOLD = 0.0015
-
-function renderMarkdown(src: string): string {
+function renderMarkdown(source: string): string {
   try {
-    const raw = marked.parse(src) as string
-    return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } })
+    return DOMPurify.sanitize(marked.parse(source) as string, { USE_PROFILES: { html: true } })
   } catch {
-    return DOMPurify.sanitize(src, { USE_PROFILES: { html: true } })
+    return DOMPurify.sanitize(source, { USE_PROFILES: { html: true } })
   }
 }
 
-function countWords(s: string): number {
-  return (s.match(/[A-Za-z0-9À-ɏЀ-ӿ֐-׿؀-ۿ']+/g) || []).length
+function formatTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '--:--'
+  const total = Math.floor(seconds)
+  return `${Math.floor(total / 60).toString().padStart(2, '0')}:${(total % 60).toString().padStart(2, '0')}`
 }
 
-function fmtMMSS(seconds: number): string {
-  if (!isFinite(seconds) || seconds < 0) return '--:--'
-  const s = Math.floor(seconds)
-  const m = Math.floor(s / 60)
-  return `${m.toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`
-}
-
-function MiniTransport({ state }: { state: AppState }) {
+function MiniTransport({ snapshot }: { snapshot: OverlaySnapshot }) {
   return (
-    <div className="overlay__mini">
+    <div className="overlay__mini" aria-label="Playback controls">
       <button
         className="overlay__btn"
-        title={state.playing ? 'Pause' : 'Play'}
-        onClick={() => window.api.togglePlay()}
+        title={snapshot.playing ? 'Pause' : 'Play'}
+        aria-label={snapshot.playing ? 'Pause' : 'Play'}
+        onClick={() => void window.overlayApi.togglePlayback()}
       >
-        {state.playing ? '⏸' : '▶'}
+        {snapshot.playing ? '⏸' : '▶'}
       </button>
       <button
         className="overlay__btn"
         title="Open controls"
         aria-label="Open controls window"
-        onClick={() => window.api.focusControls()}
+        onClick={() => void window.overlayApi.focusControls()}
       >
         ⚙
       </button>
@@ -97,22 +98,21 @@ function CueHud({
   cues: { name: string; position: number; index: number }[]
   scrollPosition: number
 }) {
-  const upcomingIdx = cues.findIndex((c) => c.position > scrollPosition + 0.001)
-  const currentIdx =
-    upcomingIdx === -1 ? cues.length - 1 : Math.max(0, upcomingIdx - 1)
-  const visible = cues.slice(Math.max(0, currentIdx - 1), currentIdx + 4)
+  const upcomingIndex = cues.findIndex((cue) => cue.position > scrollPosition + 0.001)
+  const currentIndex = upcomingIndex === -1 ? cues.length - 1 : Math.max(0, upcomingIndex - 1)
+  const visible = cues.slice(Math.max(0, currentIndex - 1), currentIndex + 4)
   return (
-    <div className="cue-hud">
-      {visible.map((c) => {
-        const isCurrent = c.index === currentIdx && upcomingIdx !== 0
-        const isPast = c.position <= scrollPosition && !isCurrent
+    <div className="cue-hud" aria-label="Cue points">
+      {visible.map((cue) => {
+        const current = cue.index === currentIndex && upcomingIndex !== 0
+        const past = cue.position <= scrollPosition && !current
         return (
           <div
-            key={c.index}
-            className={`cue-hud__row ${isCurrent ? 'cue-hud__row--current' : ''} ${isPast ? 'cue-hud__row--past' : ''}`}
+            key={cue.index}
+            className={`cue-hud__row ${current ? 'cue-hud__row--current' : ''} ${past ? 'cue-hud__row--past' : ''}`}
           >
-            <span className="cue-hud__num">{c.index + 1}</span>
-            <span className="cue-hud__name">{c.name}</span>
+            <span className="cue-hud__num">{cue.index + 1}</span>
+            <span className="cue-hud__name">{cue.name}</span>
           </div>
         )
       })}
@@ -121,450 +121,450 @@ function CueHud({
 }
 
 function Chronometer({
-  visible,
-  playing,
+  snapshot,
   scrollPosition,
-  scrollSpeed,
   textHeight,
   viewportHeight,
   wordCount,
-  position,
-  fileKey,
+  documentId,
 }: {
-  visible: boolean
-  playing: boolean
+  snapshot: OverlaySnapshot
   scrollPosition: number
-  scrollSpeed: number
   textHeight: number
   viewportHeight: number
   wordCount: number
-  position: 'corner' | 'banner-top' | 'banner-bottom'
-  fileKey: string
+  documentId: string
 }) {
   const [elapsed, setElapsed] = useState(0)
-  const [hidden, setHidden] = useState(typeof document !== 'undefined' && document.hidden)
-  const tickRef = useRef<number>(0)
-  const lastRef = useRef<number>(0)
-
-  useEffect(() => {
-    const onVis = () => setHidden(document.hidden)
-    document.addEventListener('visibilitychange', onVis)
-    return () => document.removeEventListener('visibilitychange', onVis)
-  }, [])
-
-  useEffect(() => {
-    if (!playing || hidden) {
-      cancelAnimationFrame(tickRef.current)
-      lastRef.current = 0
-      return
-    }
-    const tick = (now: number) => {
-      if (!lastRef.current) lastRef.current = now
-      const dt = (now - lastRef.current) / 1000
-      lastRef.current = now
-      setElapsed((e) => e + dt)
-      tickRef.current = requestAnimationFrame(tick)
-    }
-    tickRef.current = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(tickRef.current)
-  }, [playing, hidden])
-
-  useEffect(() => {
-    if (scrollPosition === 0) setElapsed(0)
-  }, [scrollPosition])
+  const last = useRef(0)
 
   useEffect(() => {
     setElapsed(0)
-  }, [fileKey])
+  }, [documentId])
 
-  if (!visible) return null
+  useEffect(() => {
+    if (!snapshot.playing) {
+      last.current = 0
+      return
+    }
+    last.current = performance.now()
+    const timer = setInterval(() => {
+      const now = performance.now()
+      if (document.hidden) {
+        last.current = now
+      } else {
+        setElapsed((value) => value + (now - last.current) / 1000)
+        last.current = now
+      }
+    }, 250)
+    return () => clearInterval(timer)
+  }, [snapshot.playing])
 
+  if (!snapshot.showChronometer) return null
   const range = Math.max(1, textHeight - viewportHeight)
-  const totalSec = range / Math.max(1, scrollSpeed)
-  const remainingSec = (1 - scrollPosition) * totalSec
-  const targetWpm = totalSec > 0 ? Math.round((wordCount * 60) / totalSec) : 0
-
+  const totalSeconds = range / Math.max(1, snapshot.scrollSpeed)
+  const remaining = (1 - scrollPosition) * totalSeconds
+  const wordsPerMinute = totalSeconds > 0 ? Math.round((wordCount * 60) / totalSeconds) : 0
   return (
-    <div className={`chrono chrono--${position}`}>
-      <span>⏱ {fmtMMSS(elapsed)}</span>
+    <div className="chrono chrono--corner" aria-live="off">
+      <span>⏱ {formatTime(elapsed)}</span>
       <span className="chrono__sep">·</span>
-      <span title="Time to end at current speed">→ {fmtMMSS(remainingSec)}</span>
+      <span title="Estimated time to end">→ {formatTime(remaining)}</span>
       <span className="chrono__sep">·</span>
-      <span title="Target words-per-minute at current speed">{targetWpm} wpm</span>
+      <span>{wordsPerMinute} wpm</span>
     </div>
   )
 }
 
 export function Overlay() {
-  const [state, setState] = useState<AppState | null>(null)
+  const [snapshot, setSnapshot] = useState<OverlaySnapshot | null>(null)
+  const [documentContent, setDocumentContent] = useState<DocumentContent | null>(null)
+  const [startupError, setStartupError] = useState<string | null>(null)
 
   useEffect(() => {
-    let unsub: (() => void) | undefined
-    window.api.getState().then(setState)
-    unsub = window.api.onState(setState)
-    return () => unsub?.()
+    const unsubscribeSnapshot = window.overlayApi.onSnapshot(setSnapshot)
+    const unsubscribeDocument = window.overlayApi.onActiveDocument(setDocumentContent)
+    void window.overlayApi
+      .bootstrap()
+      .then((payload) => {
+        setSnapshot(payload.snapshot)
+        setDocumentContent(payload.activeDocument)
+        setStartupError(payload.hasStartupIssues ? 'Some documents could not be restored. Open Controls for details.' : null)
+      })
+      .catch((error: unknown) => {
+        setStartupError(error instanceof Error ? error.message : 'Overlay failed to initialize')
+      })
+    return () => {
+      unsubscribeSnapshot()
+      unsubscribeDocument()
+    }
   }, [])
 
-  if (!state) return null
-  return state.bannerMode ? <BannerView state={state} /> : <FullView state={state} />
+  if (!snapshot) {
+    return startupError ? <div className="overlay__fatal">{startupError}</div> : null
+  }
+  const metadata = snapshot.activeDocumentMeta
+  const content = documentContent?.id === metadata?.id ? documentContent : null
+  return snapshot.bannerMode ? (
+    <BannerView snapshot={snapshot} metadata={metadata} content={content} />
+  ) : (
+    <FullView snapshot={snapshot} metadata={metadata} content={content} startupError={startupError} />
+  )
 }
 
-function FullView({ state }: { state: AppState }) {
+type ViewProps = {
+  snapshot: OverlaySnapshot
+  metadata: OverlayDocumentMeta | null
+  content: DocumentContent | null
+}
+
+function usePlaybackCheckpoint(
+  snapshot: OverlaySnapshot,
+  content: DocumentContent | null,
+  localPosition: React.MutableRefObject<number>,
+) {
+  const gate = useRef(new PlaybackCheckpointGate(250, 0.05))
+
+  useEffect(() => {
+    gate.current.reset()
+  }, [snapshot.playbackSessionId, content?.id, content?.revision])
+
+  return (position: number, terminal: boolean, now: number) => {
+    if (!snapshot.playbackSessionId || !content) return
+    localPosition.current = position
+    if (!gate.current.shouldSend({ now, position, terminal })) return
+    void window.overlayApi.checkpoint({
+      documentId: content.id,
+      revision: content.revision,
+      sessionId: snapshot.playbackSessionId,
+      position,
+      terminal,
+    })
+  }
+}
+
+function FullView({
+  snapshot,
+  metadata,
+  content,
+  startupError,
+}: ViewProps & { startupError: string | null }) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const textRef = useRef<HTMLDivElement>(null)
-  const liveRef = useRef(state)
-  liveRef.current = state
-
-  const localPosRef = useRef(state.scrollPosition)
-  const lastSentRef = useRef(state.scrollPosition)
-  const lastDispatchAtRef = useRef(0)
-  const rafRef = useRef<number>(0)
-  const lastTickRef = useRef<number>(0)
-
-  const [geom, setGeom] = useState({ textH: 0, viewportH: 0 })
+  const liveSnapshot = useRef(snapshot)
+  liveSnapshot.current = snapshot
+  const localPosition = useRef(snapshot.scrollPosition)
+  const lastCheckpointPosition = useRef(snapshot.scrollPosition)
+  const frame = useRef(0)
+  const lastTick = useRef(0)
+  const [geometry, setGeometry] = useState({ textH: 0, viewportH: 0 })
   const [countdown, setCountdown] = useState<number | null>(null)
+  const [renderedPosition, setRenderedPosition] = useState(snapshot.scrollPosition)
+  const visualUpdateGate = useRef(new PlaybackCheckpointGate(250))
+  const checkpoint = usePlaybackCheckpoint(snapshot, content, localPosition)
 
-  const file = state.files[state.currentFileIndex]
-  const display = useMemo(() => (file ? stripCues(file.content) : ''), [file?.content])
-  const cues = useMemo(() => (file ? parseCues(file.content) : []), [file?.content])
-  const isMarkdownFile = file ? /\.(md|markdown)$/i.test(file.path) : false
-  const renderAsMd = !!file && (state.markdown || isMarkdownFile)
+  const display = useMemo(() => stripCues(content?.content ?? ''), [content?.content])
+  const cues = useMemo(() => parseCues(content?.content ?? ''), [content?.content])
+  const renderAsMarkdown = !!content && shouldRenderMarkdown(
+    display.length,
+    snapshot.markdown,
+    metadata?.format,
+  )
   const html = useMemo(
-    () => (renderAsMd ? renderMarkdown(display) : null),
-    [display, renderAsMd],
+    () => (renderAsMarkdown ? renderMarkdown(display) : null),
+    [display, renderAsMarkdown],
   )
   const wordCount = useMemo(() => countWords(display), [display])
 
   const applyTransform = () => {
-    if (!viewportRef.current || !textRef.current) return
-    const viewportH = viewportRef.current.clientHeight
-    const textH = textRef.current.scrollHeight
-    const range = Math.max(1, textH - viewportH)
-    const offset = -localPosRef.current * range
-    const cur = liveRef.current
-    const sx = cur.mirrorH ? -1 : 1
-    const sy = cur.mirrorV ? -1 : 1
-    textRef.current.style.transform = `translateY(${offset}px) scale(${sx}, ${sy})`
+    const viewport = viewportRef.current
+    const text = textRef.current
+    if (!viewport || !text) return
+    const range = Math.max(1, text.scrollHeight - viewport.clientHeight)
+    const offset = -localPosition.current * range
+    const current = liveSnapshot.current
+    text.style.transform = `translateY(${offset}px) scale(${current.mirrorH ? -1 : 1}, ${current.mirrorV ? -1 : 1})`
   }
 
   useLayoutEffect(() => {
-    if (!viewportRef.current || !textRef.current) return
-    const viewportH = viewportRef.current.clientHeight
-    const textH = textRef.current.scrollHeight
-    if (textH !== geom.textH || viewportH !== geom.viewportH) {
-      setGeom({ textH, viewportH })
-      window.api.reportOverlayGeom({ textH, viewportH })
-    }
+    const viewport = viewportRef.current
+    const text = textRef.current
+    if (!viewport || !text) return
+    const next = { textH: text.scrollHeight, viewportH: viewport.clientHeight }
+    setGeometry(next)
+    void window.overlayApi.reportGeometry(next)
     applyTransform()
-  }, [html, display, state.fontSize, state.fontFamily, state.mirrorH, state.mirrorV])
-
-  useEffect(() => {
-    if (Math.abs(state.scrollPosition - lastSentRef.current) > ECHO_THRESHOLD) {
-      localPosRef.current = state.scrollPosition
-      lastSentRef.current = state.scrollPosition
-      applyTransform()
-    }
-  }, [state.scrollPosition])
+  }, [html, display, snapshot.fontSize, snapshot.fontFamily, snapshot.mirrorH, snapshot.mirrorV])
 
   useEffect(() => {
     const viewport = viewportRef.current
     const text = textRef.current
     if (!viewport || !text) return
-    const ro = new ResizeObserver(() => {
-      const v = viewportRef.current
-      const t = textRef.current
-      if (!v || !t) return
-      const viewportH = v.clientHeight
-      const textH = t.scrollHeight
-      setGeom((g) => (g.textH === textH && g.viewportH === viewportH ? g : { textH, viewportH }))
-      window.api.reportOverlayGeom({ textH, viewportH })
+    const observer = new ResizeObserver(() => {
+      const next = { textH: text.scrollHeight, viewportH: viewport.clientHeight }
+      setGeometry((previous) =>
+        previous.textH === next.textH && previous.viewportH === next.viewportH ? previous : next,
+      )
+      void window.overlayApi.reportGeometry(next)
       applyTransform()
     })
-    ro.observe(viewport)
-    ro.observe(text)
-    return () => ro.disconnect()
+    observer.observe(viewport)
+    observer.observe(text)
+    return () => observer.disconnect()
   }, [])
 
   useEffect(() => {
-    if (!state.playing) {
-      cancelAnimationFrame(rafRef.current)
-      lastTickRef.current = 0
+    visualUpdateGate.current.reset()
+  }, [snapshot.playbackSessionId, content?.id, content?.revision])
+
+  useEffect(() => {
+    if (Math.abs(snapshot.scrollPosition - lastCheckpointPosition.current) > 0.0015) {
+      localPosition.current = snapshot.scrollPosition
+      lastCheckpointPosition.current = snapshot.scrollPosition
+      setRenderedPosition(snapshot.scrollPosition)
+      applyTransform()
+    }
+  }, [snapshot.scrollPosition, snapshot.playbackSessionId])
+
+  useEffect(() => {
+    if (!snapshot.playing || !snapshot.playbackSessionId || !content) {
+      cancelAnimationFrame(frame.current)
+      lastTick.current = 0
       setCountdown(null)
       return
     }
     let cancelled = false
-    let countdownTimer: ReturnType<typeof setTimeout> | null = null
-
-    const startScroll = () => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const start = () => {
       if (cancelled) return
       setCountdown(null)
-      lastTickRef.current = 0
+      lastTick.current = 0
       const tick = (now: number) => {
-        const last = lastTickRef.current
-        lastTickRef.current = now
-        if (last === 0) {
-          rafRef.current = requestAnimationFrame(tick)
-          return
-        }
-        const dt = (now - last) / 1000
-        const viewport = viewportRef.current
-        const text = textRef.current
-        if (viewport && text) {
-          const range = Math.max(1, text.scrollHeight - viewport.clientHeight)
-          const cur = liveRef.current
-          const dPos = (cur.scrollSpeed * dt) / range
-          const next = Math.min(1, localPosRef.current + dPos)
-          localPosRef.current = next
-          applyTransform()
-          if (now - lastDispatchAtRef.current > DISPATCH_INTERVAL_MS || next >= 1) {
-            lastSentRef.current = next
-            lastDispatchAtRef.current = now
-            window.api.setScrollPosition(next)
-          }
-          if (next >= 1) {
-            lastTickRef.current = 0
-            window.api.patchState({ playing: false })
-            return
+        const previous = lastTick.current
+        lastTick.current = now
+        if (previous) {
+          const viewport = viewportRef.current
+          const text = textRef.current
+          if (viewport && text) {
+            const range = Math.max(1, text.scrollHeight - viewport.clientHeight)
+            const next = Math.min(
+              1,
+              localPosition.current + (liveSnapshot.current.scrollSpeed * (now - previous)) / 1000 / range,
+            )
+            localPosition.current = next
+            lastCheckpointPosition.current = next
+            if (visualUpdateGate.current.shouldSend({ now, position: next, terminal: next >= 1 })) {
+              setRenderedPosition(next)
+            }
+            applyTransform()
+            checkpoint(next, next >= 1, now)
+            if (next >= 1) return
           }
         }
-        rafRef.current = requestAnimationFrame(tick)
+        frame.current = requestAnimationFrame(tick)
       }
-      rafRef.current = requestAnimationFrame(tick)
+      frame.current = requestAnimationFrame(tick)
     }
 
-    const cur = liveRef.current
-    if (cur.countdownEnabled && cur.countdownSeconds > 0 && cur.scrollPosition < 0.001) {
-      let n = cur.countdownSeconds
-      setCountdown(n)
+    if (snapshot.countdownEnabled && snapshot.countdownSeconds > 0 && localPosition.current < 0.001) {
+      let remaining = snapshot.countdownSeconds
+      setCountdown(remaining)
       const step = () => {
         if (cancelled) return
-        n -= 1
-        if (n <= 0) {
-          setCountdown(null)
-          startScroll()
-        } else {
-          setCountdown(n)
-          countdownTimer = setTimeout(step, 1000)
+        remaining -= 1
+        if (remaining <= 0) start()
+        else {
+          setCountdown(remaining)
+          timer = setTimeout(step, 1000)
         }
       }
-      countdownTimer = setTimeout(step, 1000)
+      timer = setTimeout(step, 1000)
     } else {
-      startScroll()
+      start()
     }
 
     return () => {
       cancelled = true
-      cancelAnimationFrame(rafRef.current)
-      if (countdownTimer) clearTimeout(countdownTimer)
-      setCountdown(null)
+      cancelAnimationFrame(frame.current)
+      if (timer) clearTimeout(timer)
     }
-  }, [state.playing])
+  }, [snapshot.playing, snapshot.playbackSessionId, content?.id, content?.revision])
 
-  const overlayBg = { background: `rgba(0, 0, 0, ${state.bgDim})` }
   const textStyle: React.CSSProperties = {
-    fontSize: `${state.fontSize}px`,
-    fontFamily: state.fontFamily,
-    color: state.fontColor,
+    fontSize: `${snapshot.fontSize}px`,
+    fontFamily: snapshot.fontFamily,
+    color: snapshot.fontColor,
   }
-  const eyeLineTop = `${state.eyeLinePosition * 100}%`
-  const cls = `overlay__text ${state.textShadow ? 'overlay__text--shadow' : ''} ${renderAsMd ? 'overlay__text--md' : ''}`
-
-  const onTextDoubleClick = () => {
-    if (!file) return
-    window.api.patchState({ editMode: true, playing: false })
-    window.api.focusControls()
-  }
-
-  const onDragMouseDown = useWindowDrag()
-  const onResizeSE = useWindowResize('se')
-  const onResizeSW = useWindowResize('sw')
-  const onResizeNE = useWindowResize('ne')
-  const onResizeNW = useWindowResize('nw')
+  const eyeLineTop = `${snapshot.eyeLinePosition * 100}%`
+  const className = `overlay__text ${snapshot.textShadow ? 'overlay__text--shadow' : ''} ${renderAsMarkdown ? 'overlay__text--md' : ''}`
+  const drag = useWindowDrag()
+  const resizeSE = useWindowResize('se')
+  const resizeSW = useWindowResize('sw')
+  const resizeNE = useWindowResize('ne')
+  const resizeNW = useWindowResize('nw')
 
   return (
     <div className="overlay">
-      <div className="overlay__bg" style={overlayBg} />
+      <div className="overlay__bg" style={{ background: `rgba(0, 0, 0, ${snapshot.bgDim})` }} />
       <div className="overlay__drag">
-        <div className="overlay__drag-grip" onMouseDown={onDragMouseDown} />
-        <MiniTransport state={state} />
+        <div className="overlay__drag-grip" onMouseDown={drag} />
+        <MiniTransport snapshot={snapshot} />
       </div>
-      <div className="overlay__resize overlay__resize--se" onMouseDown={onResizeSE} />
-      <div className="overlay__resize overlay__resize--sw" onMouseDown={onResizeSW} />
-      <div className="overlay__resize overlay__resize--ne" onMouseDown={onResizeNE} />
-      <div className="overlay__resize overlay__resize--nw" onMouseDown={onResizeNW} />
-      <div className="overlay__viewport" ref={viewportRef} onDoubleClick={onTextDoubleClick}>
-        {file ? (
+      <div className="overlay__resize overlay__resize--se" onMouseDown={resizeSE} />
+      <div className="overlay__resize overlay__resize--sw" onMouseDown={resizeSW} />
+      <div className="overlay__resize overlay__resize--ne" onMouseDown={resizeNE} />
+      <div className="overlay__resize overlay__resize--nw" onMouseDown={resizeNW} />
+      <div
+        className="overlay__viewport"
+        ref={viewportRef}
+        onDoubleClick={() => content && void window.overlayApi.openEditor()}
+      >
+        {content ? (
           html ? (
             <div
               ref={textRef}
-              className={cls}
+              className={className}
               style={textStyle}
               dir="auto"
               dangerouslySetInnerHTML={{ __html: html }}
             />
           ) : (
-            <div ref={textRef} className={cls} style={textStyle} dir="auto">
+            <div ref={textRef} className={className} style={textStyle} dir="auto">
               {display}
             </div>
           )
         ) : (
-          <div className="overlay__placeholder">No script loaded — open a file from the Controls window</div>
+          <div className="overlay__placeholder">
+            {startupError ?? 'No script loaded — open a file from Controls'}
+          </div>
         )}
       </div>
-
-      {state.focusMode && (
+      {snapshot.focusMode && (
         <>
           <div className="overlay__focus-mask" style={{ top: 0, height: `calc(${eyeLineTop} - 1.4em)` }} />
-          <div
-            className="overlay__focus-mask"
-            style={{ top: `calc(${eyeLineTop} + 1.4em)`, bottom: 0, height: 'auto' }}
-          />
+          <div className="overlay__focus-mask" style={{ top: `calc(${eyeLineTop} + 1.4em)`, bottom: 0, height: 'auto' }} />
         </>
       )}
-
-      {state.showEyeLine && <div className="overlay__eyeline" style={{ top: eyeLineTop }} />}
-
-      {countdown !== null && (
-        <div className="overlay__countdown">{countdown}</div>
+      {snapshot.showEyeLine && <div className="overlay__eyeline" style={{ top: eyeLineTop }} />}
+      {countdown !== null && <div className="overlay__countdown">{countdown}</div>}
+      {snapshot.showCueHud && cues.length > 0 && (
+        <CueHud cues={cues} scrollPosition={renderedPosition} />
       )}
-
-      {state.showCueHud && cues.length > 0 && (
-        <CueHud cues={cues} scrollPosition={state.scrollPosition} />
+      {content && (
+        <Chronometer
+          snapshot={snapshot}
+          scrollPosition={renderedPosition}
+          textHeight={geometry.textH}
+          viewportHeight={geometry.viewportH}
+          wordCount={wordCount}
+          documentId={content.id}
+        />
       )}
-
-      <Chronometer
-        visible={state.showChronometer && !!file}
-        playing={state.playing}
-        scrollPosition={state.scrollPosition}
-        scrollSpeed={state.scrollSpeed}
-        textHeight={geom.textH}
-        viewportHeight={geom.viewportH}
-        wordCount={wordCount}
-        position="corner"
-        fileKey={file?.path ?? ''}
-      />
     </div>
   )
 }
 
-function BannerView({ state }: { state: AppState }) {
+function BannerView({ snapshot, metadata: _metadata, content }: ViewProps) {
   const stripRef = useRef<HTMLDivElement>(null)
   const textRef = useRef<HTMLDivElement>(null)
-  const liveRef = useRef(state)
-  liveRef.current = state
-
-  const bannerDragDown = useWindowDrag()
-  const bannerResizeSE = useWindowResize('se')
-  const bannerResizeSW = useWindowResize('sw')
-  const bannerResizeNE = useWindowResize('ne')
-  const bannerResizeNW = useWindowResize('nw')
-
-  const localPosRef = useRef(state.scrollPosition)
-  const lastSentRef = useRef(state.scrollPosition)
-  const lastDispatchAtRef = useRef(0)
-  const rafRef = useRef<number>(0)
-  const lastTickRef = useRef<number>(0)
-
-  const file = state.files[state.currentFileIndex]
+  const liveSnapshot = useRef(snapshot)
+  liveSnapshot.current = snapshot
+  const localPosition = useRef(snapshot.scrollPosition)
+  const lastCheckpointPosition = useRef(snapshot.scrollPosition)
+  const frame = useRef(0)
+  const lastTick = useRef(0)
+  const checkpoint = usePlaybackCheckpoint(snapshot, content, localPosition)
   const flat = useMemo(
-    () => (file ? stripCues(file.content).replace(/\s+/g, ' ').trim() : ''),
-    [file?.content],
+    () => stripCues(content?.content ?? '').replace(/\s+/g, ' ').trim(),
+    [content?.content],
   )
 
   const applyTransform = () => {
-    if (!stripRef.current || !textRef.current) return
-    const stripW = stripRef.current.clientWidth
-    const textW = textRef.current.scrollWidth
-    const range = Math.max(1, textW + stripW)
-    const offset = stripW - localPosRef.current * range
-    const cur = liveRef.current
-    const sx = cur.mirrorH ? -1 : 1
-    const sy = cur.mirrorV ? -1 : 1
-    textRef.current.style.transform = `translateX(${offset}px) scale(${sx}, ${sy})`
+    const strip = stripRef.current
+    const text = textRef.current
+    if (!strip || !text) return
+    const range = Math.max(1, text.scrollWidth + strip.clientWidth)
+    const offset = strip.clientWidth - localPosition.current * range
+    const current = liveSnapshot.current
+    text.style.transform = `translateX(${offset}px) scale(${current.mirrorH ? -1 : 1}, ${current.mirrorV ? -1 : 1})`
   }
 
-  useLayoutEffect(() => {
-    applyTransform()
-  }, [flat, state.fontSize, state.fontFamily, state.mirrorH, state.mirrorV])
+  useLayoutEffect(applyTransform, [flat, snapshot.fontSize, snapshot.fontFamily, snapshot.mirrorH, snapshot.mirrorV])
 
   useEffect(() => {
-    if (Math.abs(state.scrollPosition - lastSentRef.current) > ECHO_THRESHOLD) {
-      localPosRef.current = state.scrollPosition
-      lastSentRef.current = state.scrollPosition
+    if (Math.abs(snapshot.scrollPosition - lastCheckpointPosition.current) > 0.0015) {
+      localPosition.current = snapshot.scrollPosition
+      lastCheckpointPosition.current = snapshot.scrollPosition
       applyTransform()
     }
-  }, [state.scrollPosition])
+  }, [snapshot.scrollPosition, snapshot.playbackSessionId])
 
   useEffect(() => {
-    if (!state.playing) {
-      cancelAnimationFrame(rafRef.current)
-      lastTickRef.current = 0
+    if (!snapshot.playing || !snapshot.playbackSessionId || !content) {
+      cancelAnimationFrame(frame.current)
+      lastTick.current = 0
       return
     }
     const tick = (now: number) => {
-      const last = lastTickRef.current
-      lastTickRef.current = now
-      if (last === 0) {
-        rafRef.current = requestAnimationFrame(tick)
-        return
-      }
-      const dt = (now - last) / 1000
-      const strip = stripRef.current
-      const text = textRef.current
-      if (strip && text) {
-        const stripW = strip.clientWidth
-        const textW = text.scrollWidth
-        const range = Math.max(1, textW + stripW)
-        const cur = liveRef.current
-        const dPos = (cur.scrollSpeed * dt) / range
-        const next = Math.min(1, localPosRef.current + dPos)
-        localPosRef.current = next
-        applyTransform()
-        if (now - lastDispatchAtRef.current > DISPATCH_INTERVAL_MS || next >= 1) {
-          lastSentRef.current = next
-          lastDispatchAtRef.current = now
-          window.api.setScrollPosition(next)
-        }
-        if (next >= 1) {
-          lastTickRef.current = 0
-          window.api.patchState({ playing: false })
-          return
+      const previous = lastTick.current
+      lastTick.current = now
+      if (previous) {
+        const strip = stripRef.current
+        const text = textRef.current
+        if (strip && text) {
+          const range = Math.max(1, text.scrollWidth + strip.clientWidth)
+          const next = Math.min(
+            1,
+            localPosition.current + (liveSnapshot.current.scrollSpeed * (now - previous)) / 1000 / range,
+          )
+          localPosition.current = next
+          lastCheckpointPosition.current = next
+          applyTransform()
+          checkpoint(next, next >= 1, now)
+          if (next >= 1) return
         }
       }
-      rafRef.current = requestAnimationFrame(tick)
+      frame.current = requestAnimationFrame(tick)
     }
-    rafRef.current = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [state.playing])
+    frame.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame.current)
+  }, [snapshot.playing, snapshot.playbackSessionId, content?.id, content?.revision])
 
-  const stripStyle: React.CSSProperties = {
-    background: `rgba(0, 0, 0, ${state.bgDim})`,
-    fontSize: `${state.fontSize}px`,
-    fontFamily: state.fontFamily,
-    color: state.fontColor,
-  }
-  const wrapStyle: React.CSSProperties =
-    state.bannerPosition === 'top' ? { top: 0, bottom: 'auto' } : { top: 'auto', bottom: 0 }
+  const drag = useWindowDrag()
+  const resizeSE = useWindowResize('se')
+  const resizeSW = useWindowResize('sw')
+  const resizeNE = useWindowResize('ne')
+  const resizeNW = useWindowResize('nw')
+  const edgeStyle: React.CSSProperties =
+    snapshot.bannerPosition === 'top' ? { top: 0, bottom: 'auto' } : { top: 'auto', bottom: 0 }
 
   return (
     <div className="overlay overlay--banner">
       <div className="overlay__drag">
-        <div className="overlay__drag-grip" onMouseDown={bannerDragDown} />
-        <MiniTransport state={state} />
+        <div className="overlay__drag-grip" onMouseDown={drag} />
+        <MiniTransport snapshot={snapshot} />
       </div>
-      <div className="overlay__resize overlay__resize--se" onMouseDown={bannerResizeSE} />
-      <div className="overlay__resize overlay__resize--sw" onMouseDown={bannerResizeSW} />
-      <div className="overlay__resize overlay__resize--ne" onMouseDown={bannerResizeNE} />
-      <div className="overlay__resize overlay__resize--nw" onMouseDown={bannerResizeNW} />
-      <div className={`banner ${state.textShadow ? 'banner--shadow' : ''}`} style={{ ...wrapStyle, ...stripStyle }} ref={stripRef}>
-        {file ? (
-          <div ref={textRef} className="banner__text" dir="auto">
+      <div className="overlay__resize overlay__resize--se" onMouseDown={resizeSE} />
+      <div className="overlay__resize overlay__resize--sw" onMouseDown={resizeSW} />
+      <div className="overlay__resize overlay__resize--ne" onMouseDown={resizeNE} />
+      <div className="overlay__resize overlay__resize--nw" onMouseDown={resizeNW} />
+      <div
+        className={`banner ${snapshot.textShadow ? 'banner--shadow' : ''}`}
+        style={{
+          ...edgeStyle,
+          background: `rgba(0, 0, 0, ${snapshot.bgDim})`,
+          fontSize: `${snapshot.fontSize}px`,
+          fontFamily: snapshot.fontFamily,
+          color: snapshot.fontColor,
+        }}
+        ref={stripRef}
+      >
+        {content ? (
+          <div ref={textRef} className="banner__text" dir="auto" onDoubleClick={() => void window.overlayApi.openEditor()}>
             {flat}
           </div>
         ) : (
-          <div className="overlay__placeholder" style={{ position: 'static' }}>
-            No script loaded
-          </div>
+          <div className="overlay__placeholder" style={{ position: 'static' }}>No script loaded</div>
         )}
       </div>
     </div>

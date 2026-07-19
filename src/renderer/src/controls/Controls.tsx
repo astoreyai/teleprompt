@@ -1,1314 +1,701 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { parseCues, stripCues } from '../../../shared/cues'
-import type { AppState, BannerPosition, HotkeyCommand, ScriptFile } from '../../../shared/types'
-import { DEFAULT_HOTKEYS, HOTKEY_LABELS } from '../../../shared/types'
+import type { AppSnapshot, DocumentContent, DocumentMeta } from '../../../shared/contracts'
+import type { PlatformInfo, PreferencePatch, PresentationStatus } from '../../../shared/ipc'
+import { countWords } from '../../../shared/text'
+import type { BannerPosition, HotkeyCommand } from '../../../shared/types'
 import { EXAMPLES } from '../shared/examples'
-import { tokenize, indexOfFirstTokenAtOrAfterChar, VoicePacer, type Token } from '../shared/voice'
+import { indexOfFirstTokenAtOrAfterChar, progressForToken, tokenize, VoicePacer } from '../shared/voice'
+import { EditorPane, type EditorHandle } from './EditorPane'
+import { HotkeysPanel } from './HotkeysPanel'
+import { SettingsPanel } from './SettingsPanel'
+import { ConfirmDialog, Panel, Range, Toggle, type ConfirmRequest } from './ui'
+
+const DISPLAY_FAMILIES = [
+  ['Inter, system-ui, sans-serif', 'Inter / System'],
+  ['Georgia, serif', 'Georgia'],
+  ['ui-monospace, monospace', 'Monospace'],
+  ["'Helvetica Neue', Arial, sans-serif", 'Helvetica'],
+  ["'Times New Roman', serif", 'Times'],
+  ['OpenDyslexic, sans-serif', 'OpenDyslexic'],
+] as const
 
 export function Controls() {
-  const [state, setState] = useState<AppState | null>(null)
-  const [voiceError, setVoiceError] = useState<string | null>(null)
-  const [saveMsg, setSaveMsg] = useState<string | null>(null)
-  const [dragOver, setDragOver] = useState(false)
+  const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
+  const [documentContent, setDocumentContent] = useState<DocumentContent | null>(null)
+  const [startupIssues, setStartupIssues] = useState<string[]>([])
+  const [fatalError, setFatalError] = useState<string | null>(null)
+  const [platform, setPlatform] = useState<PlatformInfo | null>(null)
+  const [presentation, setPresentation] = useState<PresentationStatus | null>(null)
   const [failedHotkeys, setFailedHotkeys] = useState<string[]>([])
+  const [overlayGeometry, setOverlayGeometry] = useState({ textH: 0, viewportH: 0 })
+  const [dragOver, setDragOver] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
-  const [platform, setPlatform] = useState<{
-    platform: NodeJS.Platform
-    displayServer: string
-    contentProtectionSupported: boolean
-  } | null>(null)
-  const [presentationStatus, setPresentationStatus] = useState<{ ok: boolean; reason?: string } | null>(null)
+  const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
-  const [overlayGeom, setOverlayGeom] = useState<{ textH: number; viewportH: number }>({
-    textH: 0,
-    viewportH: 0,
-  })
-  const stateRef = useRef<AppState | null>(null)
-  const pacerRef = useRef<VoicePacer | null>(null)
-
-  useEffect(() => {
-    let unsub: (() => void) | undefined
-    window.api.getState().then(setState)
-    unsub = window.api.onState(setState)
-    window.api.getHotkeyStatus().then((s) => setFailedHotkeys(s.failed))
-    window.api.getPlatformInfo().then(setPlatform)
-    window.api.getPresentationStatus().then(setPresentationStatus)
-    const unsubGeom = window.api.onOverlayGeom(setOverlayGeom)
-    return () => {
-      unsub?.()
-      unsubGeom()
+  const editorRef = useRef<EditorHandle>(null)
+  const snapshotRef = useRef<AppSnapshot | null>(null)
+  const contentRef = useRef<DocumentContent | null>(null)
+  const voicePacer = useRef<VoicePacer | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  snapshotRef.current = snapshot
+  contentRef.current = documentContent
+  const derivedContent = useMemo(() => {
+    const source = documentContent?.content ?? ''
+    const visible = stripCues(source)
+    return {
+      wordCount: countWords(visible),
+      cues: parseCues(source),
     }
-  }, [])
+  }, [documentContent?.content])
 
-  useEffect(() => {
-    stateRef.current = state
-  }, [state])
-
-  const tokens = useMemo<Token[]>(() => {
-    const file = state?.files[state.currentFileIndex]
-    return file ? tokenize(stripCues(file.content)) : []
-  }, [state?.currentFileIndex, state?.files])
-
-  const cues = useMemo(() => {
-    const file = state?.files[state.currentFileIndex]
-    return file ? parseCues(file.content) : []
-  }, [state?.currentFileIndex, state?.files])
-
-  useEffect(() => () => pacerRef.current?.stop(), [])
-
-  useEffect(() => {
-    if (!state) return
-    if (state.voicePacing) {
-      if (!pacerRef.current) {
-        pacerRef.current = new VoicePacer(
-          () => {
-            const cur = stateRef.current
-            const f = cur?.files[cur.currentFileIndex]
-            return f ? tokenize(stripCues(f.content)) : []
-          },
-          () => {
-            const cur = stateRef.current
-            if (!cur) return 0
-            const file = cur.files[cur.currentFileIndex]
-            if (!file) return 0
-            const stripped = stripCues(file.content)
-            const all = tokenize(stripped)
-            const charPos = Math.floor(cur.scrollPosition * stripped.length)
-            return indexOfFirstTokenAtOrAfterChar(all, charPos)
-          },
-          (tokenIdx) => {
-            const cur = stateRef.current
-            if (!cur) return
-            const file = cur.files[cur.currentFileIndex]
-            if (!file) return
-            const stripped = stripCues(file.content)
-            const all = tokenize(stripped)
-            const tok = all[Math.min(tokenIdx, all.length - 1)]
-            if (!tok) return
-            const next = Math.min(1, tok.start / Math.max(1, stripped.length))
-            window.api.setScrollPosition(next)
-          },
-          (msg) => setVoiceError(msg),
-        )
-      }
-      const ok = pacerRef.current.start()
-      if (!ok) window.api.patchState({ voicePacing: false })
-    } else {
-      pacerRef.current?.stop()
-      setVoiceError(null)
-    }
-  }, [state?.voicePacing, tokens.length])
-
-  const showToast = (msg: string, ms = 4000) => {
-    setToast(msg)
-    setTimeout(() => setToast((t) => (t === msg ? null : t)), ms)
-  }
-
-  const handleFiles = async (files: File[]) => {
-    const errors: string[] = []
-    for (const f of files) {
-      let path = ''
-      try {
-        path = window.api.getPathForFile(f) || ''
-      } catch {
-        path = ''
-      }
-      if (path) {
-        const r = await window.api.loadFromPath(path)
-        if (r.ok) continue
-        errors.push(`${f.name}: ${r.error}`)
-      }
-      if (f.size > 10 * 1024 * 1024) {
-        errors.push(`${f.name}: too large (drag-drop cap 10MB)`)
-        continue
-      }
-      try {
-        const content = await f.text()
-        await window.api.loadFromContent(f.name, content)
-      } catch (err) {
-        errors.push(`${f.name}: ${err instanceof Error ? err.message : 'read failed'}`)
-      }
-    }
-    if (errors.length) showToast(errors.join(' • '))
+  const showToast = (message: string, timeoutMs = 5000) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    setToast(message)
+    toastTimer.current = setTimeout(() => setToast(null), timeoutMs)
   }
 
   useEffect(() => {
-    const swallow = (e: DragEvent) => e.preventDefault()
-    document.addEventListener('dragover', swallow)
-    return () => document.removeEventListener('dragover', swallow)
-  }, [])
-
-  if (!state) return <div className="controls">Loading…</div>
-
-  const file = state.files[state.currentFileIndex]
-  const patch = (p: Partial<AppState>) => window.api.patchState(p)
-
-  const askConfirm = (req: Omit<ConfirmRequest, 'resolve'>) =>
-    new Promise<boolean>((resolve) => {
-      setConfirmRequest({ ...req, resolve })
+    const unsubscribeSnapshot = window.controlsApi.onSnapshot(setSnapshot)
+    const unsubscribeDocument = window.controlsApi.onActiveDocument(setDocumentContent)
+    const unsubscribeProgress = window.controlsApi.onProgress((position) => {
+      setSnapshot((current) => (current ? { ...current, scrollPosition: position } : current))
     })
+    const unsubscribeGeometry = window.controlsApi.onOverlayGeometry(setOverlayGeometry)
 
-  const onDrop = async (e: React.DragEvent) => {
-    e.preventDefault()
-    setDragOver(false)
-    const files = Array.from(e.dataTransfer.files)
-    if (files.length > 0) await handleFiles(files)
-  }
+    void window.controlsApi
+      .bootstrap()
+      .then((payload) => {
+        setSnapshot(payload.snapshot)
+        setDocumentContent(payload.activeDocument)
+        setStartupIssues(payload.startupIssues)
+      })
+      .catch((error: unknown) => {
+        setFatalError(error instanceof Error ? error.message : 'Controls failed to initialize')
+      })
+    void window.controlsApi.getPlatformInfo().then(setPlatform).catch(() => undefined)
+    void window.controlsApi.getPresentationStatus().then(setPresentation).catch(() => undefined)
+    void window.controlsApi.getHotkeyStatus().then((status) => setFailedHotkeys(status.failed)).catch(() => undefined)
 
-  const handleOpen = async () => {
-    const result = await window.api.openFiles()
-    if (result.errors.length) {
-      showToast(result.errors.map((e) => `${e.path.split('/').pop()}: ${e.error}`).join(' • '))
+    return () => {
+      unsubscribeSnapshot()
+      unsubscribeDocument()
+      unsubscribeProgress()
+      unsubscribeGeometry()
+      voicePacer.current?.stop()
+      if (toastTimer.current) clearTimeout(toastTimer.current)
     }
+  }, [])
+
+  useEffect(() => {
+    if (!snapshot?.voicePacing || !documentContent) {
+      voicePacer.current?.stop()
+      voicePacer.current = null
+      return
+    }
+    voicePacer.current?.stop()
+    const pacer = new VoicePacer(
+      () => tokenize(stripCues(contentRef.current?.content ?? '')),
+      () => {
+        const currentSnapshot = snapshotRef.current
+        const currentContent = contentRef.current
+        if (!currentSnapshot || !currentContent) return 0
+        const stripped = stripCues(currentContent.content)
+        return indexOfFirstTokenAtOrAfterChar(
+          tokenize(stripped),
+          Math.floor(currentSnapshot.scrollPosition * stripped.length),
+        )
+      },
+      (tokenIndex) => {
+        const currentContent = contentRef.current
+        if (!currentContent) return
+        const stripped = stripCues(currentContent.content)
+        const tokens = tokenize(stripped)
+        const token = tokens[Math.min(tokenIndex, tokens.length - 1)]
+        if (token) void window.controlsApi.seek(progressForToken(tokens, tokenIndex, stripped.length))
+      },
+      (message) => {
+        showToast(message)
+        void window.controlsApi.reportVoiceStatus('error', message)
+      },
+    )
+    voicePacer.current = pacer
+    if (pacer.start()) void window.controlsApi.reportVoiceStatus('active')
+    else void window.controlsApi.reportVoiceStatus('error', 'Web Speech recognition is unavailable')
+    return () => {
+      if (voicePacer.current === pacer) voicePacer.current = null
+      pacer.stop()
+    }
+  }, [snapshot?.voicePacing, documentContent?.id, documentContent?.revision])
+
+  useEffect(() => {
+    const preventDefault = (event: DragEvent) => event.preventDefault()
+    document.addEventListener('dragover', preventDefault)
+    return () => document.removeEventListener('dragover', preventDefault)
+  }, [])
+
+  if (fatalError) {
+    return (
+      <main className="fatal-screen">
+        <h1>Teleprompt could not start</h1>
+        <p>{fatalError}</p>
+        <button type="button" className="btn btn--primary" onClick={() => window.location.reload()}>
+          Retry
+        </button>
+      </main>
+    )
+  }
+  if (!snapshot) return <div className="controls controls--loading" role="status">Loading workspace…</div>
+
+  const metadata = snapshot.documents.find((item) => item.id === snapshot.activeDocumentId) ?? null
+  const activeContent = documentContent?.id === metadata?.id ? documentContent : null
+  const wordCount = activeContent ? derivedContent.wordCount : 0
+  const cues = activeContent ? derivedContent.cues : []
+
+  const patch = (value: PreferencePatch) => {
+    void window.controlsApi.updatePreferences(value).catch((error: unknown) => {
+      showToast(error instanceof Error ? error.message : 'Unable to update preferences')
+    })
   }
 
-  const handleSave = async () => {
-    setSaveMsg('saving…')
-    const result = await window.api.saveCurrent()
-    setSaveMsg(result.ok ? 'saved ✓' : `error: ${result.error}`)
-    setTimeout(() => setSaveMsg(null), 2000)
+  const askConfirm = (request: Omit<ConfirmRequest, 'resolve'>) =>
+    new Promise<boolean>((resolve) => setConfirmRequest({ ...request, resolve }))
+
+  const flushEditor = async () => (await editorRef.current?.flush()) ?? true
+
+  const selectDocument = async (id: string) => {
+    if (!(await flushEditor())) return
+    await window.controlsApi.selectDocument(id)
+  }
+
+  const removeDocument = async (item: DocumentMeta) => {
+    if (item.id === metadata?.id && !(await flushEditor())) return
+    let discard = item.dirty
+    if (discard) {
+      discard = await askConfirm({
+        title: `Remove “${item.name}”?`,
+        body: 'This script has an unsaved recovery draft. Removing it permanently discards that draft; the original source file is not changed.',
+        confirmLabel: 'Discard draft',
+        danger: true,
+      })
+      if (!discard) return
+    }
+    let result = await window.controlsApi.removeDocument(item.id, discard)
+    if (!result.ok && result.reason === 'dirty' && !discard) {
+      const confirmed = await askConfirm({
+        title: `Remove “${item.name}”?`,
+        body: 'The script changed while this dialog was open. Remove it and discard its recovery draft?',
+        confirmLabel: 'Discard draft',
+        danger: true,
+      })
+      if (confirmed) result = await window.controlsApi.removeDocument(item.id, true)
+    }
+    if (!result.ok) showToast(`Could not remove ${item.name}: ${result.reason}`)
+  }
+
+  const openFiles = async () => {
+    if (!(await flushEditor())) return
+    const result = await window.controlsApi.openFiles()
+    if (result.errors.length) showToast(result.errors.map((item) => `${item.name}: ${item.error}`).join(' • '), 8000)
+  }
+
+  const openDropped = async (files: File[]) => {
+    if (!(await flushEditor())) return
+    const errors: string[] = []
+    for (const file of files) {
+      const result = await window.controlsApi.openDroppedFile(file)
+      if (!result.ok) errors.push(`${file.name}: ${result.error}`)
+    }
+    if (errors.length) showToast(errors.join(' • '), 8000)
+  }
+
+  const saveDocument = async (flushFirst = true, forceSaveAs = false) => {
+    if (!metadata) return
+    if (flushFirst && !(await flushEditor())) return
+    setSaveMessage(metadata.saveMode === 'save-as' ? 'choosing destination…' : 'saving…')
+    try {
+      const result = await window.controlsApi.saveDocument(metadata.id, forceSaveAs)
+      if (result.ok) setSaveMessage('saved ✓')
+      else if (result.reason === 'cancelled') setSaveMessage(null)
+      else if (result.reason === 'conflict' && !forceSaveAs) {
+        const saveCopy = await askConfirm({
+          title: 'Source file changed on disk',
+          body: 'Teleprompt did not overwrite the newer source. Save your recovery draft to a separate text file instead?',
+          confirmLabel: 'Save a copy',
+        })
+        if (saveCopy) return saveDocument(false, true)
+      }
+      else {
+        const detail = result.error ? `: ${result.error}` : ''
+        setSaveMessage(`save failed: ${result.reason}${detail}`)
+        showToast(`Save failed (${result.reason})${detail}`)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'unknown error'
+      setSaveMessage(`save failed: ${message}`)
+      showToast(`Save failed: ${message}`)
+    }
+    setTimeout(() => setSaveMessage(null), 3500)
+  }
+
+  const reloadDocument = async () => {
+    if (!metadata?.sourcePath) return
+    if (metadata.dirty || snapshot.editMode) {
+      const discard = await askConfirm({
+        title: `Reload “${metadata.name}”?`,
+        body: 'Reloading replaces the recovery draft with the current source file. This cannot be undone.',
+        confirmLabel: 'Discard draft and reload',
+        danger: true,
+      })
+      if (!discard) return
+    }
+    const result = await window.controlsApi.reloadDocument(metadata.id, true)
+    if (!result.ok) showToast(`Reload failed: ${result.reason}`)
+  }
+
+  const createDocument = async (name: string, content: string, edit = false) => {
+    if (!(await flushEditor())) return
+    const format = name.endsWith('.md') ? 'markdown' : name.endsWith('.fountain') ? 'fountain' : 'text'
+    await window.controlsApi.createDocument(name, content, format)
+    if (edit) patch({ editMode: true })
   }
 
   return (
     <div
       className={`controls ${dragOver ? 'controls--drop' : ''}`}
-      onDragOver={(e) => {
-        e.preventDefault()
-        if (!dragOver) setDragOver(true)
+      onDragOver={(event) => {
+        event.preventDefault()
+        setDragOver(true)
       }}
-      onDragLeave={(e) => {
-        if (e.currentTarget === e.target) setDragOver(false)
+      onDragLeave={(event) => event.currentTarget === event.target && setDragOver(false)}
+      onDrop={(event) => {
+        event.preventDefault()
+        setDragOver(false)
+        void openDropped(Array.from(event.dataTransfer.files))
       }}
-      onDrop={onDrop}
     >
-      {dragOver && <div className="drop-overlay">Drop files to load</div>}
+      {dragOver && <div className="drop-overlay">Drop scripts to import</div>}
       {toast && (
-        <div className="toast" onClick={() => setToast(null)}>
+        <button type="button" className="toast" role="alert" onClick={() => setToast(null)}>
           {toast}
-        </div>
+        </button>
       )}
       {confirmRequest && (
-        <ConfirmModal
+        <ConfirmDialog
           request={confirmRequest}
-          onResolve={(v) => {
-            confirmRequest.resolve(v)
+          onResolve={(value) => {
+            confirmRequest.resolve(value)
             setConfirmRequest(null)
           }}
         />
       )}
 
-      <aside className="sidebar">
+      <aside className="sidebar" aria-label="Script library">
         <div className="sidebar__header">
-          <div className="sidebar__title">Scripts</div>
-          <button className="btn btn--primary" onClick={handleOpen}>
-            + Open
+          <h1 className="sidebar__title">Teleprompt</h1>
+          <button type="button" className="btn btn--primary" onClick={() => void openFiles()}>
+            Open…
           </button>
         </div>
-
         <div className="sidebar__list">
-          {state.files.length === 0 && (
-            <div style={{ color: 'var(--muted)', padding: 12, fontSize: 12 }}>
-              No files loaded. Click <b>+ Open</b> or drag files here.
-            </div>
+          {snapshot.documents.length === 0 && (
+            <p className="empty-state">Open a document, drop one here, or start a new script.</p>
           )}
-          {state.files.map((f, i) => (
-            <div
-              key={f.path + i}
-              className={`file ${i === state.currentFileIndex ? 'file--active' : ''}`}
-              onClick={() => window.api.selectFile(i)}
-              title={f.path}
-            >
-              <span className="file__name">{f.name}</span>
+          {snapshot.documents.map((item) => (
+            <div key={item.id} className={`file ${item.id === metadata?.id ? 'file--active' : ''}`}>
               <button
+                type="button"
+                className="file__select"
+                aria-current={item.id === metadata?.id ? 'true' : undefined}
+                onClick={() => void selectDocument(item.id)}
+                title={item.sourcePath ?? item.name}
+              >
+                <span className="file__name">{item.name}</span>
+                {item.dirty && <span className="file__dirty" title="Recovery draft">●</span>}
+                {item.saveMode === 'save-as' && <span className="file__badge">copy</span>}
+              </button>
+              <button
+                type="button"
                 className="file__remove"
-                title="Remove"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  window.api.removeFile(i)
-                }}
+                aria-label={`Remove ${item.name}`}
+                onClick={() => void removeDocument(item)}
               >
                 ×
               </button>
             </div>
           ))}
         </div>
-
-        {state.recentFiles.length > 0 && (
-          <div className="recent">
-            <div className="recent__label">Recent</div>
-            {state.recentFiles.slice(0, 6).map((p) => (
-              <div
-                key={p}
+        {snapshot.recentFiles.length > 0 && (
+          <section className="recent" aria-labelledby="recent-heading">
+            <h2 id="recent-heading" className="sidebar__section-title">Recent</h2>
+            {snapshot.recentFiles.slice(0, 6).map((path) => (
+              <button
+                type="button"
+                key={path}
                 className="recent__item"
-                onClick={() => window.api.loadFromPath(p)}
-                title={p}
+                title={path}
+                onClick={async () => {
+                  if (!(await flushEditor())) return
+                  const result = await window.controlsApi.openRecent(path)
+                  if (!result.ok) showToast(`${fileName(path)}: ${result.error}`)
+                }}
               >
-                {p.split('/').pop()}
-              </div>
+                {fileName(path)}
+              </button>
             ))}
-          </div>
+          </section>
         )}
-
-        <div className="examples">
-          <div className="examples__label">Examples</div>
-          {EXAMPLES.map((ex) => (
-            <div
-              key={ex.fileName}
+        <section className="examples" aria-labelledby="examples-heading">
+          <h2 id="examples-heading" className="sidebar__section-title">Examples</h2>
+          {EXAMPLES.filter((example) => !example.fileName.endsWith('.srt')).map((example) => (
+            <button
+              type="button"
+              key={example.fileName}
               className="example"
-              onClick={() => window.api.loadFromContent(ex.fileName, ex.content)}
-              title={ex.description}
+              onClick={() => void createDocument(example.fileName, example.content)}
+              title={example.description}
             >
-              <span className="example__name">{ex.label}</span>
-              <span className="example__desc">{ex.description}</span>
-            </div>
+              <span className="example__name">{example.label}</span>
+              <span className="example__desc">{example.description}</span>
+            </button>
           ))}
-        </div>
+        </section>
       </aside>
 
       <main className="main">
-        {platform?.displayServer === 'wayland' && (
-          <div className="banner-warn">
-            Running on Wayland — always-on-top, screen-capture hiding, and global hotkeys may be
-            limited by the compositor. XWayland gives the most predictable behavior.
+        {startupIssues.length > 0 && (
+          <div className="banner-warn" role="status">
+            <strong>Recovery notice:</strong> {startupIssues.join(' • ')}
+            <button type="button" className="banner-warn__close" aria-label="Dismiss recovery notice" onClick={() => setStartupIssues([])}>×</button>
           </div>
         )}
-        <div className="transport">
+        {platform?.displayServer === 'wayland' && (
+          <div className="banner-warn">
+            Wayland may limit global shortcuts, screen-capture protection, and always-on-top behavior. XWayland is the supported presentation path for this release.
+          </div>
+        )}
+        <div className="transport" aria-label="Playback transport">
           <button
+            type="button"
             className="btn btn--primary"
-            onClick={() => window.api.togglePlay()}
-            disabled={!file}
+            disabled={!activeContent}
+            onClick={async () => {
+              if (!(await flushEditor())) return
+              const result = await window.controlsApi.togglePlayback()
+              if (!result.ok) showToast(result.reason ?? 'Unable to start playback')
+            }}
           >
-            {state.playing ? '⏸  Pause' : '▶  Play'}
+            {snapshot.playing ? 'Pause' : 'Play'}
           </button>
-          <button
-            className="btn"
-            onClick={() => patch({ scrollPosition: 0, playing: false })}
-            disabled={!file}
-          >
-            ↺ Restart
+          <button type="button" className="btn" disabled={!activeContent} onClick={() => void window.controlsApi.restartPlayback()}>
+            Restart
           </button>
-          <button className="btn" onClick={() => window.api.reloadCurrent()} disabled={!file}>
-            ⟳ Reload
+          <button type="button" className="btn" disabled={!metadata?.sourcePath} onClick={() => void reloadDocument()}>
+            Reload source
           </button>
+          <button type="button" className="btn" disabled={!activeContent} onClick={() => void saveDocument()}>
+            {metadata?.saveMode === 'save-as' ? 'Save As…' : 'Save'}
+          </button>
+          <label className="sr-only" htmlFor="playback-position">Playback position</label>
           <input
+            id="playback-position"
             className="scrub"
             type="range"
             min={0}
             max={1}
             step={0.001}
-            value={state.scrollPosition}
-            onChange={(e) => window.api.setScrollPosition(parseFloat(e.target.value))}
-            style={{ flex: 1, marginLeft: 12 }}
-            disabled={!file}
+            value={snapshot.scrollPosition}
+            disabled={!activeContent}
+            onChange={(event) => void window.controlsApi.seek(Number(event.target.value))}
           />
-          <div className="transport__pos">
-            {(state.scrollPosition * 100).toFixed(0)}%
-          </div>
+          <output className="transport__pos" htmlFor="playback-position">
+            {(snapshot.scrollPosition * 100).toFixed(0)}%
+          </output>
         </div>
 
-        {state.editMode && file && (
+        {snapshot.editMode && metadata && activeContent && (
           <EditorPane
-            file={file}
-            index={state.currentFileIndex}
-            saveMsg={saveMsg}
-            onSave={handleSave}
-            onClose={() => patch({ editMode: false })}
+            key={activeContent.id}
+            ref={editorRef}
+            metadata={metadata}
+            documentContent={activeContent}
+            saveMessage={saveMessage}
+            onIssue={showToast}
+            onSaveAfterFlush={() => saveDocument(false)}
+            onCloseAfterFlush={async () => {
+              patch({ editMode: false })
+            }}
           />
         )}
 
         <div className="panels">
-          <Panel title="Transparency & sizing">
-            <Range
-              label="Opacity"
-              value={state.opacity}
-              min={0.05}
-              max={1}
-              step={0.01}
-              format={(v) => `${Math.round(v * 100)}%`}
-              onChange={(v) => patch({ opacity: v })}
+          <PacingPanel
+            snapshot={snapshot}
+            wordCount={wordCount}
+            geometry={overlayGeometry}
+            patch={patch}
+          />
+
+          <Panel title="Display">
+            <Toggle
+              label="Show overlay"
+              checked={snapshot.overlayVisible}
+              onChange={(visible) => window.controlsApi.setOverlayVisible(visible)}
             />
-            <Range
-              label="BG dim"
-              value={state.bgDim}
-              min={0}
-              max={1}
-              step={0.01}
-              format={(v) => `${Math.round(v * 100)}%`}
-              onChange={(v) => patch({ bgDim: v })}
-            />
-            <Range
-              label="Eye-line"
-              value={state.eyeLinePosition}
-              min={0.05}
-              max={0.95}
-              step={0.01}
-              format={(v) => `${Math.round(v * 100)}%`}
-              onChange={(v) => patch({ eyeLinePosition: v })}
-            />
+            <Range label="Opacity" value={snapshot.opacity} min={0.05} max={1} step={0.01} format={percent} onChange={(opacity) => patch({ opacity })} />
+            <Range label="Background" value={snapshot.bgDim} min={0} max={1} step={0.01} format={percent} onChange={(bgDim) => patch({ bgDim })} />
+            <Range label="Eye-line" value={snapshot.eyeLinePosition} min={0.05} max={0.95} step={0.01} format={percent} onChange={(eyeLinePosition) => patch({ eyeLinePosition })} />
           </Panel>
 
-          <PacingTargetPanel state={state} wordCount={tokens.length} geom={overlayGeom} patch={patch} />
-
           <Panel title="Typography">
-            <Range
-              label="Font size"
-              value={state.fontSize}
-              min={16}
-              max={140}
-              step={1}
-              format={(v) => `${v.toFixed(0)}px`}
-              onChange={(v) => patch({ fontSize: v })}
-            />
+            <Range label="Font size" value={snapshot.fontSize} min={16} max={140} step={1} format={(value) => `${value}px`} onChange={(fontSize) => patch({ fontSize })} />
             <div className="row">
-              <label>Family</label>
-              <select
-                value={state.fontFamily}
-                onChange={(e) => patch({ fontFamily: e.target.value })}
-              >
-                <option value="Inter, system-ui, sans-serif">Inter / System</option>
-                <option value="Georgia, serif">Georgia</option>
-                <option value="ui-monospace, monospace">Monospace</option>
-                <option value="'Helvetica Neue', Arial, sans-serif">Helvetica</option>
-                <option value="'Times New Roman', serif">Times</option>
-                <option value="OpenDyslexic, sans-serif">OpenDyslexic</option>
+              <label htmlFor="font-family">Family</label>
+              <select id="font-family" value={snapshot.fontFamily} onChange={(event) => patch({ fontFamily: event.target.value })}>
+                {DISPLAY_FAMILIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </div>
             <div className="row">
-              <label>Color</label>
-              <input
-                type="color"
-                className="color-input"
-                value={state.fontColor}
-                onChange={(e) => patch({ fontColor: e.target.value })}
-              />
-              <input
-                type="text"
-                value={state.fontColor}
-                onChange={(e) => patch({ fontColor: e.target.value })}
-              />
+              <label htmlFor="font-color">Color</label>
+              <input id="font-color" type="color" className="color-input" value={snapshot.fontColor} onChange={(event) => patch({ fontColor: event.target.value })} />
+              <code className="color-value">{snapshot.fontColor}</code>
             </div>
-            <Toggle
-              label="Drop shadow"
-              checked={state.textShadow}
-              onChange={(v) => patch({ textShadow: v })}
-            />
-            <Toggle
-              label="Force markdown rendering"
-              checked={state.markdown}
-              onChange={(v) => patch({ markdown: v })}
-              hint=".md and .markdown files always render as markdown; toggle this on to force it for other extensions too"
-            />
+            <Toggle label="Drop shadow" checked={snapshot.textShadow} onChange={(textShadow) => patch({ textShadow })} />
+            <Toggle label="Force Markdown" checked={snapshot.markdown} onChange={(markdown) => patch({ markdown })} hint="Markdown files render automatically; enable this for other document types." />
           </Panel>
 
           <Panel title="Layout">
-            <Toggle
-              label="Banner / lower-third mode"
-              checked={state.bannerMode}
-              onChange={(v) => patch({ bannerMode: v })}
-              hint="Single-line horizontal scroll. Resize the overlay window to a thin strip."
-            />
+            <Toggle label="Banner / lower-third" checked={snapshot.bannerMode} onChange={(bannerMode) => patch({ bannerMode })} />
             <div className="row">
-              <label>Banner edge</label>
-              <select
-                value={state.bannerPosition}
-                onChange={(e) => patch({ bannerPosition: e.target.value as BannerPosition })}
-                disabled={!state.bannerMode}
-              >
-                <option value="top">Top</option>
-                <option value="bottom">Bottom</option>
+              <label htmlFor="banner-edge">Banner edge</label>
+              <select id="banner-edge" disabled={!snapshot.bannerMode} value={snapshot.bannerPosition} onChange={(event) => patch({ bannerPosition: event.target.value as BannerPosition })}>
+                <option value="top">Top</option><option value="bottom">Bottom</option>
               </select>
             </div>
+            <Toggle label="Show eye-line" checked={snapshot.showEyeLine} onChange={(showEyeLine) => patch({ showEyeLine })} />
+            <Toggle label="Focus mask" checked={snapshot.focusMode} onChange={(focusMode) => patch({ focusMode })} />
+            <Toggle label="Mirror horizontally" checked={snapshot.mirrorH} onChange={(mirrorH) => patch({ mirrorH })} hint="For beam-splitter rigs." />
+            <Toggle label="Mirror vertically" checked={snapshot.mirrorV} onChange={(mirrorV) => patch({ mirrorV })} />
           </Panel>
 
           <Panel title="Overlay behavior">
-            <Toggle
-              label="Click-through"
-              checked={state.clickThrough}
-              onChange={(v) => patch({ clickThrough: v })}
-              hint="Mouse passes through to apps below"
-            />
+            <Toggle label="Click-through" checked={snapshot.clickThrough} onChange={(clickThrough) => patch({ clickThrough })} hint="Mouse input passes to the application below." />
             <Toggle
               label="Hide from screen capture"
-              checked={state.hideFromCapture}
-              onChange={(v) => patch({ hideFromCapture: v })}
+              checked={snapshot.hideFromCapture}
               disabled={platform ? !platform.contentProtectionSupported : false}
-              hint={
-                platform && !platform.contentProtectionSupported
-                  ? 'Not supported on Linux (Electron limitation)'
-                  : 'Invisible in OBS / Zoom / recordings'
-              }
+              onChange={(hideFromCapture) => patch({ hideFromCapture })}
+              hint={platform && !platform.contentProtectionSupported ? 'Electron does not support this on Linux.' : 'Requests capture protection from the operating system.'}
             />
             <Toggle
               label="Stay above fullscreen apps"
-              checked={state.aboveFullscreen}
+              checked={snapshot.aboveFullscreen}
               disabled={platform?.platform !== 'linux'}
-              onChange={(v) => patch({ aboveFullscreen: v })}
-              hint={
-                platform?.platform === 'linux'
-                  ? 'Marks the overlay as a notification-type window (recreates it). Some compositors restrict drag/click on this type — flip off if interaction breaks.'
-                  : 'Linux-only; alwaysOnTop already covers this on macOS/Windows'
-              }
-            />
-            <Toggle
-              label="Show eye-line"
-              checked={state.showEyeLine}
-              onChange={(v) => patch({ showEyeLine: v })}
-            />
-            <Toggle
-              label="Focus mode (mask other lines)"
-              checked={state.focusMode}
-              onChange={(v) => patch({ focusMode: v })}
-            />
-            <Toggle
-              label="Mirror horizontal"
-              checked={state.mirrorH}
-              onChange={(v) => patch({ mirrorH: v })}
-              hint="For beam-splitter rigs"
-            />
-            <Toggle
-              label="Mirror vertical"
-              checked={state.mirrorV}
-              onChange={(v) => patch({ mirrorV: v })}
+              onChange={(aboveFullscreen) => patch({ aboveFullscreen })}
+              hint="Linux notification-window mode; compositor support varies."
             />
           </Panel>
 
           <Panel title="Voice pacing">
             <Toggle
-              label="Listen & auto-advance"
-              checked={state.voicePacing}
-              onChange={async (v) => {
-                if (v && !state.voiceConsent) {
-                  const ok = await askConfirm({
+              label="Listen and auto-advance"
+              checked={snapshot.voicePacing}
+              disabled={!activeContent}
+              onChange={async (enabled) => {
+                if (enabled && !snapshot.voiceConsent) {
+                  const consent = await askConfirm({
                     title: 'Enable voice pacing?',
-                    body:
-                      'Voice pacing uses the Web Speech API. On Chromium-based apps (including Electron), this typically streams microphone audio to a Google service for transcription. The status bar will display "voice (cloud)" while active.',
-                    confirmLabel: 'Enable',
-                    danger: true,
+                    body: 'Voice pacing grants microphone access to Chromium speech recognition. Depending on the platform, audio may be processed by a network speech service. No microphone access occurs until you continue.',
+                    confirmLabel: 'Grant microphone access',
                   })
-                  if (!ok) return
-                  patch({ voiceConsent: true, voicePacing: true })
-                  return
+                  if (!consent) return
+                  await window.controlsApi.grantVoiceConsent()
                 }
-                patch({ voicePacing: v })
+                const result = await window.controlsApi.requestVoice(enabled)
+                if (!result.ok) showToast(result.reason ?? 'Voice pacing could not start')
               }}
-              hint="Sends mic audio to Google for transcription (cloud STT)"
+              hint="Microphone access is explicit and the active state is shown below."
             />
-            {voiceError && (
-              <div style={{ color: 'var(--danger)', fontSize: 11, marginTop: 6 }}>{voiceError}</div>
-            )}
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>
-              Tokens in script: <b>{tokens.length}</b>
-            </div>
-          </Panel>
-
-          <Panel title="Editing">
-            <Toggle
-              label="Live edit pane"
-              checked={state.editMode}
-              onChange={(v) => patch({ editMode: v })}
-              hint="Edit current file; changes push to overlay live"
-            />
+            <p className="form-hint">Status: <strong>{snapshot.voiceStatus}</strong>{snapshot.voiceError ? ` — ${snapshot.voiceError}` : ''} · {wordCount} script words</p>
             <button
+              type="button"
               className="btn"
+              disabled={!snapshot.voiceConsent}
               onClick={async () => {
-                const blank = await window.api.loadFromContent(
-                  `untitled-${Date.now()}.md`,
-                  '# New script\n\n[[CUE: intro]] Start typing…',
-                )
-                const cur = stateRef.current
-                if (cur) await window.api.selectFile(cur.files.length)
-                await window.api.patchState({ editMode: true })
-                void blank
+                await window.controlsApi.revokeVoiceConsent()
+                showToast('Microphone consent revoked')
               }}
-              style={{ marginTop: 8 }}
             >
-              + New blank script
+              Revoke microphone consent
             </button>
           </Panel>
 
+          <Panel title="Editing">
+            <Toggle label="Show live editor" checked={snapshot.editMode} disabled={!activeContent} onChange={(editMode) => patch({ editMode })} />
+            <button type="button" className="btn" onClick={() => void createDocument(`untitled-${Date.now()}.md`, '# New script\n\n[[CUE: intro]] Start typing…', true)}>
+              New blank script
+            </button>
+            {metadata?.saveMode === 'save-as' && <p className="form-hint">Imported {metadata.format.toUpperCase()} content is extracted text. Saving always creates a new text/Markdown file and never overwrites the source document.</p>}
+          </Panel>
+
           <Panel title="Cue points">
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>
-              Insert <code style={{ color: 'var(--text)' }}>[[CUE: name]]</code> in the script.
-              First 9 are bound to <b>Ctrl+Alt+1..9</b>.
+            <Toggle label="Show cue HUD" checked={snapshot.showCueHud} onChange={(showCueHud) => patch({ showCueHud })} />
+            <p className="form-hint">Add <code>[[CUE: name]]</code> to a script. Ctrl+Alt+1–9 jumps to the first nine cues.</p>
+            <div className="cues">
+              {cues.length === 0 && <span className="form-hint">No cues in this script.</span>}
+              {cues.map((cue) => (
+                <button type="button" key={cue.index} className="cue" onClick={() => void window.controlsApi.seek(cue.position)}>
+                  <span className="cue__num">{cue.index < 9 ? `⌃⌥${cue.index + 1}` : `#${cue.index + 1}`}</span>
+                  <span className="cue__name">{cue.name}</span>
+                  <span className="cue__pct">{(cue.position * 100).toFixed(0)}%</span>
+                </button>
+              ))}
             </div>
-            <Toggle
-              label="Show cue HUD on overlay"
-              checked={state.showCueHud}
-              onChange={(v) => patch({ showCueHud: v })}
-              hint="Bottom-left list of upcoming cues with current highlighted"
-            />
-            {cues.length === 0 ? (
-              <div style={{ fontSize: 11, color: 'var(--muted)' }}>No cues in current file.</div>
-            ) : (
-              <div className="cues">
-                {cues.map((c) => (
-                  <button
-                    key={c.index}
-                    className="cue"
-                    onClick={() => window.api.setScrollPosition(c.position)}
-                    title={`Jump to ${(c.position * 100).toFixed(0)}%`}
-                  >
-                    <span className="cue__num">
-                      {c.index < 9 ? `⌃⌥${c.index + 1}` : `#${c.index + 1}`}
-                    </span>
-                    <span className="cue__name">{c.name}</span>
-                    <span className="cue__pct">{(c.position * 100).toFixed(0)}%</span>
-                  </button>
-                ))}
-              </div>
-            )}
           </Panel>
 
-          <Panel title="Countdown">
+          <Panel title="Remote & presentation">
+            <Toggle label="Arm Page Up/Down clicker" checked={snapshot.clickerMode} onChange={(enabled) => window.controlsApi.setClickerArmed(enabled)} hint="These keys become global shortcuts while armed." />
+            <Range label="Step size" value={snapshot.clickerStep} min={0.01} max={0.5} step={0.01} format={percent} onChange={(clickerStep) => patch({ clickerStep })} />
             <Toggle
-              label="3-2-1 before play"
-              checked={state.countdownEnabled}
-              onChange={(v) => patch({ countdownEnabled: v })}
-              hint="Only triggers when starting from the top"
-            />
-            <Range
-              label="Seconds"
-              value={state.countdownSeconds}
-              min={1}
-              max={10}
-              step={1}
-              format={(v) => `${v}s`}
-              onChange={(v) => patch({ countdownSeconds: Math.round(v) })}
+              label="Drive focused presentation"
+              checked={snapshot.drivePresentation}
+              disabled={!presentation?.ok}
+              onChange={(enabled) => window.controlsApi.setPresentationArmed(enabled)}
+              hint={presentation?.ok ? 'Also sends Left/Right to the focused presentation window.' : presentation?.reason ?? 'Capability unavailable.'}
             />
           </Panel>
 
-          <Panel title="Remote / clicker">
-            <Toggle
-              label="Listen for clicker (PageUp/PageDown)"
-              checked={state.clickerMode}
-              onChange={(v) => patch({ clickerMode: v })}
-              hint="Most presentation clickers send these. Steals the keys globally while on."
-            />
-            <Range
-              label="Step size"
-              value={state.clickerStep}
-              min={0.01}
-              max={0.5}
-              step={0.01}
-              format={(v) => `${(v * 100).toFixed(0)}%`}
-              onChange={(v) => patch({ clickerStep: v })}
-            />
-            <Toggle
-              label="Show chronometer in overlay"
-              checked={state.showChronometer}
-              onChange={(v) => patch({ showChronometer: v })}
-              hint="Elapsed · time-to-end · target WPM"
-            />
-            <Toggle
-              label="Drive presentation (Right/Left to focused window)"
-              checked={state.drivePresentation}
-              disabled={!presentationStatus?.ok}
-              onChange={(v) => patch({ drivePresentation: v })}
-              hint={
-                presentationStatus?.ok
-                  ? 'Each clicker step also sends Right/Left arrow to whichever window has focus'
-                  : presentationStatus?.reason ?? 'Capability unknown'
-              }
-            />
-          </Panel>
-
-          <SettingsPanel onToast={showToast} onConfirm={askConfirm} />
-
+          <SettingsPanel toast={showToast} confirm={askConfirm} />
           <HotkeysPanel
-            bindings={state.hotkeyBindings}
+            bindings={snapshot.hotkeyBindings}
             failed={failedHotkeys}
-            onChange={(b) => patch({ hotkeyBindings: b })}
-            onReload={() => window.api.getHotkeyStatus().then((s) => setFailedHotkeys(s.failed))}
+            onUpdate={async (bindings: Record<HotkeyCommand, string>) => {
+              await window.controlsApi.updateHotkeys(bindings)
+              const status = await window.controlsApi.getHotkeyStatus()
+              setFailedHotkeys(status.failed)
+            }}
           />
         </div>
 
-        <div className="status">
-          <span className={`status__pill ${state.playing ? 'status__pill--on' : ''}`}>
-            {state.playing ? 'PLAYING' : 'PAUSED'}
-          </span>
-          <span className={`status__pill ${state.bannerMode ? 'status__pill--on' : ''}`}>
-            {state.bannerMode ? `banner-${state.bannerPosition}` : 'full'}
-          </span>
-          <span className={`status__pill ${state.clickThrough ? 'status__pill--on' : ''}`}>
-            click-through {state.clickThrough ? 'on' : 'off'}
-          </span>
-          <span className={`status__pill ${state.hideFromCapture ? 'status__pill--on' : ''}`}>
-            capture-hide {state.hideFromCapture ? 'on' : 'off'}
-          </span>
-          <span className={`status__pill ${state.voicePacing ? 'status__pill--on' : ''}`}>
-            {state.voicePacing ? 'voice (cloud)' : 'voice off'}
-          </span>
-          <span
-            className={`status__pill ${
-              state.markdown || (file && /\.(md|markdown)$/i.test(file.path)) ? 'status__pill--on' : ''
-            }`}
-          >
-            md{' '}
-            {state.markdown
-              ? 'forced'
-              : file && /\.(md|markdown)$/i.test(file.path)
-                ? 'auto'
-                : 'off'}
-          </span>
-          <span style={{ marginLeft: 'auto' }}>
-            {file ? file.name : '— no file —'}
-          </span>
-        </div>
+        <footer className="status" aria-live="polite">
+          <span className={`status__pill ${snapshot.playing ? 'status__pill--on' : ''}`}>{snapshot.playing ? 'PLAYING' : 'PAUSED'}</span>
+          <span className={`status__pill ${snapshot.overlayVisible ? 'status__pill--on' : ''}`}>overlay {snapshot.overlayVisible ? 'visible' : 'hidden'}</span>
+          <span className={`status__pill ${snapshot.clickerMode ? 'status__pill--on' : ''}`}>clicker {snapshot.clickerMode ? 'armed' : 'off'}</span>
+          <span className={`status__pill ${snapshot.voiceStatus === 'active' ? 'status__pill--on' : ''}`}>voice {snapshot.voiceStatus}</span>
+          <span className="status__document">{metadata ? `${metadata.name}${metadata.dirty ? ' • unsaved draft' : ''}` : 'No script loaded'}</span>
+        </footer>
       </main>
     </div>
   )
 }
 
-function Panel(props: { title: string; children: React.ReactNode; defaultCollapsed?: boolean }) {
-  const key = `panel-collapsed:${props.title}`
-  const [collapsed, setCollapsed] = useState(() => {
-    try {
-      const stored = localStorage.getItem(key)
-      if (stored === '1') return true
-      if (stored === '0') return false
-    } catch {
-      /* ignore */
-    }
-    return props.defaultCollapsed ?? false
-  })
-  const toggle = () => {
-    setCollapsed((c) => {
-      const next = !c
-      try {
-        localStorage.setItem(key, next ? '1' : '0')
-      } catch {
-        /* ignore */
-      }
-      return next
-    })
-  }
-  return (
-    <section className={`panel ${collapsed ? 'panel--collapsed' : ''}`}>
-      <h3 className="panel__title" onClick={toggle} role="button" aria-expanded={!collapsed}>
-        <span className="panel__chevron">{collapsed ? '▸' : '▾'}</span>
-        {props.title}
-      </h3>
-      {!collapsed && <div className="panel__body">{props.children}</div>}
-    </section>
-  )
-}
-
-function Range(props: {
-  label: string
-  value: number
-  min: number
-  max: number
-  step: number
-  format?: (v: number) => string
-  onChange: (v: number) => void
-}) {
-  return (
-    <div className="row">
-      <label>{props.label}</label>
-      <input
-        type="range"
-        min={props.min}
-        max={props.max}
-        step={props.step}
-        value={props.value}
-        onChange={(e) => props.onChange(parseFloat(e.target.value))}
-      />
-      <div className="row__value">{props.format ? props.format(props.value) : props.value}</div>
-    </div>
-  )
-}
-
-function parseDuration(s: string): number | null {
-  const t = s.trim()
-  if (!t) return null
-  const hms = t.match(/^(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)$/)
-  if (hms) {
-    const h = parseInt(hms[1], 10)
-    const m = parseInt(hms[2], 10)
-    const sec = parseFloat(hms[3])
-    if (m >= 60 || sec >= 60) return null
-    return h * 3600 + m * 60 + sec
-  }
-  const ms = t.match(/^(\d+):(\d{1,2}(?:\.\d+)?)$/)
-  if (ms) {
-    const m = parseInt(ms[1], 10)
-    const sec = parseFloat(ms[2])
-    if (sec >= 60) return null
-    return m * 60 + sec
-  }
-  const n = parseFloat(t)
-  if (Number.isFinite(n) && n > 0) return n * 60
-  return null
-}
-
-function formatDuration(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
-  const total = Math.round(seconds)
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const s = total % 60
-  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-  return `${m}:${s.toString().padStart(2, '0')}`
-}
-
-function PacingTargetPanel({
-  state,
+function PacingPanel({
+  snapshot,
   wordCount,
-  geom,
+  geometry,
   patch,
 }: {
-  state: AppState
+  snapshot: AppSnapshot
   wordCount: number
-  geom: { textH: number; viewportH: number }
-  patch: (p: Partial<AppState>) => void
+  geometry: { textH: number; viewportH: number }
+  patch: (value: PreferencePatch) => void
 }) {
-  const range = Math.max(0, geom.textH - geom.viewportH)
-  const ready = range > 0 && wordCount > 0
-  const scrollSpeed = state.scrollSpeed
-
-  const totalSec = ready ? range / Math.max(1, scrollSpeed) : 0
-  const currentWpm = totalSec > 0 ? (wordCount * 60) / totalSec : 0
-
-  const displayDurSec =
-    state.targetMode === 'duration' && state.targetDurationSec ? state.targetDurationSec : totalSec
-  const displayWpm =
-    state.targetMode === 'wpm' && state.targetWpm ? state.targetWpm : currentWpm
-
-  const [durStr, setDurStr] = useState('')
-  const [wpmStr, setWpmStr] = useState('')
-  const [parseError, setParseError] = useState<string | null>(null)
+  const range = Math.max(0, geometry.textH - geometry.viewportH)
+  const duration = range > 0 ? range / Math.max(1, snapshot.scrollSpeed) : 0
+  const currentWpm = duration > 0 ? (wordCount * 60) / duration : 0
+  const [durationInput, setDurationInput] = useState('')
+  const [wpmInput, setWpmInput] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    setDurStr(displayDurSec > 0 ? formatDuration(displayDurSec) : '')
-    setWpmStr(displayWpm > 0 ? Math.round(displayWpm).toString() : '')
-    setParseError(null)
-  }, [displayDurSec, displayWpm])
+    setDurationInput(snapshot.targetMode === 'duration' && snapshot.targetDurationSec ? formatDuration(snapshot.targetDurationSec) : '')
+    setWpmInput(snapshot.targetMode === 'wpm' && snapshot.targetWpm ? Math.round(snapshot.targetWpm).toString() : '')
+  }, [snapshot.targetMode, snapshot.targetDurationSec, snapshot.targetWpm])
 
   const commitDuration = () => {
-    if (!durStr.trim()) {
-      setParseError(null)
+    if (!durationInput.trim()) return
+    const value = parseDuration(durationInput)
+    if (value === null) {
+      setError('Use mm:ss, h:mm:ss, or minutes such as 4.5.')
       return
     }
-    const secs = parseDuration(durStr)
-    if (secs === null) {
-      setParseError('Use mm:ss, h:mm:ss, or minutes (e.g. 5:30, 1:05:00, 4.5)')
-      return
-    }
-    setParseError(null)
-    patch({ targetMode: 'duration', targetDurationSec: secs })
+    setError(null)
+    patch({ targetMode: 'duration', targetDurationSec: value, targetWpm: null })
   }
 
   const commitWpm = () => {
-    if (!wpmStr.trim()) return
-    const n = parseFloat(wpmStr)
-    if (!Number.isFinite(n) || n <= 0) return
-    setParseError(null)
-    patch({ targetMode: 'wpm', targetWpm: n })
-  }
-
-  const clearTarget = () => {
-    patch({ targetMode: null, targetDurationSec: null, targetWpm: null })
-  }
-
-  return (
-    <Panel title="Pacing target">
-      {!ready && (
-        <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>
-          Load a file and let the overlay render to enable.
-        </div>
-      )}
-      <div className="row">
-        <label>Duration</label>
-        <input
-          type="text"
-          inputMode="text"
-          placeholder="mm:ss or h:mm:ss"
-          value={durStr}
-          onChange={(e) => setDurStr(e.target.value)}
-          onBlur={commitDuration}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-          }}
-        />
-      </div>
-      <div className="row">
-        <label>Target WPM</label>
-        <input
-          type="number"
-          step="1"
-          min="20"
-          max="2000"
-          value={wpmStr}
-          onChange={(e) => setWpmStr(e.target.value)}
-          onBlur={commitWpm}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-          }}
-        />
-        <span className="row__value">wpm</span>
-      </div>
-      {parseError && (
-        <div style={{ fontSize: 10, color: 'var(--danger)', marginTop: 4 }}>{parseError}</div>
-      )}
-      <div
-        style={{
-          fontSize: 10,
-          color: 'var(--muted)',
-          lineHeight: 1.6,
-          marginTop: 6,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-        }}
-      >
-        <span style={{ flex: 1 }}>
-          {ready ? (
-            <>
-              Words: <b>{wordCount.toLocaleString()}</b> · range:{' '}
-              <b>{range.toLocaleString()} px</b> · speed:{' '}
-              <b>{scrollSpeed.toFixed(1)} px/s</b>
-            </>
-          ) : (
-            'Type a duration, press Enter or click away to apply.'
-          )}
-        </span>
-        {state.targetMode && (
-          <button
-            className="btn btn--ghost"
-            onClick={clearTarget}
-            title="Clear pacing target — speed becomes manually editable again"
-            style={{ fontSize: 10, padding: '2px 6px' }}
-          >
-            target: {state.targetMode} ✕
-          </button>
-        )}
-      </div>
-    </Panel>
-  )
-}
-
-function keyEventToAccelerator(e: React.KeyboardEvent): string | null {
-  const k = e.key
-  if (k === 'Control' || k === 'Alt' || k === 'Shift' || k === 'Meta') return null
-  const parts: string[] = []
-  if (e.ctrlKey || e.metaKey) parts.push('CommandOrControl')
-  if (e.altKey) parts.push('Alt')
-  if (e.shiftKey) parts.push('Shift')
-  let key = ''
-  const map: Record<string, string> = {
-    ArrowUp: 'Up',
-    ArrowDown: 'Down',
-    ArrowLeft: 'Left',
-    ArrowRight: 'Right',
-    ' ': 'Space',
-    Enter: 'Return',
-    Escape: 'Escape',
-    PageUp: 'PageUp',
-    PageDown: 'PageDown',
-    Home: 'Home',
-    End: 'End',
-    Backspace: 'Backspace',
-    Delete: 'Delete',
-    Insert: 'Insert',
-    Tab: 'Tab',
-  }
-  if (k.length === 1) {
-    key = k.toUpperCase()
-  } else if (map[k]) {
-    key = map[k]
-  } else if (/^F\d{1,2}$/.test(k)) {
-    key = k
-  } else {
-    return null
-  }
-  parts.push(key)
-  return parts.join('+')
-}
-
-function prettifyAccelerator(accel: string): string {
-  if (!accel) return '(none)'
-  return accel
-    .replace(/CommandOrControl/g, 'Ctrl')
-    .replace(/\+Up\b/g, '+↑')
-    .replace(/\+Down\b/g, '+↓')
-    .replace(/\+Left\b/g, '+←')
-    .replace(/\+Right\b/g, '+→')
-}
-
-function HotkeysPanel({
-  bindings,
-  failed,
-  onChange,
-  onReload,
-}: {
-  bindings: Record<HotkeyCommand, string>
-  failed: string[]
-  onChange: (b: Record<HotkeyCommand, string>) => void
-  onReload: () => void
-}) {
-  const [editing, setEditing] = useState<HotkeyCommand | null>(null)
-  const [hint, setHint] = useState<string | null>(null)
-
-  useEffect(() => {
-    onReload()
-  }, [bindings, onReload])
-
-  const startEdit = (cmd: HotkeyCommand) => {
-    setEditing(cmd)
-    setHint('Press the new shortcut, or Esc to cancel')
-  }
-
-  const onCaptureKeyDown = (cmd: HotkeyCommand, e: React.KeyboardEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.key === 'Escape') {
-      setEditing(null)
-      setHint(null)
+    const value = Number(wpmInput)
+    if (!Number.isFinite(value) || value < 20 || value > 2000) {
+      setError('Target WPM must be between 20 and 2000.')
       return
     }
-    const accel = keyEventToAccelerator(e)
-    if (!accel) return
-    const next = { ...bindings, [cmd]: accel }
-    if (Object.values(next).filter((a, i) => Object.values(next).indexOf(a) !== i).length) {
-      setHint(`${prettifyAccelerator(accel)} is already used by another command`)
-      return
-    }
-    onChange(next)
-    setEditing(null)
-    setHint(null)
-  }
-
-  const reset = (cmd: HotkeyCommand) => {
-    onChange({ ...bindings, [cmd]: DEFAULT_HOTKEYS[cmd] })
-  }
-
-  const resetAll = () => {
-    onChange({ ...DEFAULT_HOTKEYS })
+    setError(null)
+    patch({ targetMode: 'wpm', targetWpm: value, targetDurationSec: null })
   }
 
   return (
-    <Panel title="Hotkeys">
-      {failed.length > 0 && (
-        <div
-          style={{
-            fontSize: 11,
-            color: 'var(--danger)',
-            background: 'rgba(255,99,99,0.1)',
-            padding: '6px 8px',
-            borderRadius: 4,
-            marginBottom: 8,
-            border: '1px solid rgba(255,99,99,0.3)',
-          }}
-        >
-          <b>{failed.length}</b> shortcut{failed.length === 1 ? '' : 's'} failed to register
-          (likely held by another app or compositor):
-          <div style={{ fontFamily: 'ui-monospace, monospace', marginTop: 4 }}>
-            {failed.map(prettifyAccelerator).join(', ')}
-          </div>
-        </div>
-      )}
-
-      <div className="hotkey-rows">
-        {(Object.keys(DEFAULT_HOTKEYS) as HotkeyCommand[]).map((cmd) => {
-          const accel = bindings[cmd] ?? DEFAULT_HOTKEYS[cmd]
-          const isEditing = editing === cmd
-          const isFailed = failed.includes(accel)
-          return (
-            <div key={cmd} className="hotkey-row">
-              <span className="hotkey-row__label">{HOTKEY_LABELS[cmd]}</span>
-              {isEditing ? (
-                <input
-                  className="hotkey-row__capture"
-                  autoFocus
-                  readOnly
-                  value="press keys…"
-                  onKeyDown={(e) => onCaptureKeyDown(cmd, e)}
-                  onBlur={() => setEditing(null)}
-                />
-              ) : (
-                <button
-                  className={`hotkey-row__accel ${isFailed ? 'hotkey-row__accel--failed' : ''}`}
-                  onClick={() => startEdit(cmd)}
-                  title="Click to rebind"
-                >
-                  {prettifyAccelerator(accel)}
-                </button>
-              )}
-              {accel !== DEFAULT_HOTKEYS[cmd] && (
-                <button
-                  className="hotkey-row__reset"
-                  onClick={() => reset(cmd)}
-                  title="Reset to default"
-                >
-                  ↺
-                </button>
-              )}
-            </div>
-          )
-        })}
-      </div>
-
-      {hint && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>{hint}</div>}
-
-      <div
-        style={{ marginTop: 12, fontSize: 10, color: 'var(--muted)', lineHeight: 1.6 }}
-      >
-        <div>
-          <b>Ctrl+Alt+1..9</b> — Jump to cue 1–9 (fixed)
-        </div>
-        <div>
-          <b>PageUp / PageDown</b> — Step back / forward (clicker mode, fixed)
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
-        <button className="btn btn--ghost" onClick={resetAll}>
-          Reset all
-        </button>
-      </div>
-    </Panel>
-  )
-}
-
-type ConfirmRequest = {
-  title: string
-  body: string
-  confirmLabel?: string
-  cancelLabel?: string
-  danger?: boolean
-  resolve: (v: boolean) => void
-}
-
-function ConfirmModal({ request, onResolve }: { request: ConfirmRequest; onResolve: (v: boolean) => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onResolve(false)
-      if (e.key === 'Enter') onResolve(true)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onResolve])
-
-  return (
-    <div className="modal-backdrop" onClick={() => onResolve(false)}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal__title">{request.title}</div>
-        <div className="modal__body">{request.body}</div>
-        <div className="modal__actions">
-          <button className="btn" onClick={() => onResolve(false)}>
-            {request.cancelLabel ?? 'Cancel'}
-          </button>
-          <button
-            className={request.danger ? 'btn btn--danger' : 'btn btn--primary'}
-            onClick={() => onResolve(true)}
-            autoFocus
-          >
-            {request.confirmLabel ?? 'OK'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function SettingsPanel({
-  onToast,
-  onConfirm,
-}: {
-  onToast: (msg: string) => void
-  onConfirm: (req: Omit<ConfirmRequest, 'resolve'>) => Promise<boolean>
-}) {
-  const [about, setAbout] = useState<{
-    appVersion: string
-    electronVersion: string
-    nodeVersion: string
-    storePath: string
-  } | null>(null)
-
-  useEffect(() => {
-    window.api.getAbout().then(setAbout)
-  }, [])
-
-  const handleReset = async () => {
-    const ok = await onConfirm({
-      title: 'Reset all settings?',
-      body:
-        'This restores all sliders, toggles, and preferences to defaults and clears the playlist + recent files. Loaded file paths and any unsaved edits will be lost.',
-      confirmLabel: 'Reset',
-      danger: true,
-    })
-    if (!ok) return
-    await window.api.resetSettings()
-    onToast('Settings reset to defaults')
-  }
-
-  const handleExport = async () => {
-    const r = await window.api.exportSettings()
-    if (r.ok) onToast(`Exported to ${r.path}`)
-    else if (r.error !== 'cancelled') onToast(`Export failed: ${r.error}`)
-  }
-
-  const handleImport = async () => {
-    const r = await window.api.importSettings()
-    if (r.ok) onToast('Settings imported')
-    else if (r.error !== 'cancelled') onToast(`Import failed: ${r.error}`)
-  }
-
-  return (
-    <Panel title="Settings">
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
-        <button className="btn" onClick={handleExport}>
-          Export
-        </button>
-        <button className="btn" onClick={handleImport}>
-          Import
-        </button>
-        <button className="btn" onClick={handleReset} style={{ marginLeft: 'auto' }}>
-          Reset to defaults
-        </button>
-      </div>
-      {about && (
-        <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.6 }}>
-          <div>
-            Version <b style={{ color: 'var(--text)' }}>{about.appVersion}</b>
-          </div>
-          <div>
-            Electron <b style={{ color: 'var(--text)' }}>{about.electronVersion}</b> · Node{' '}
-            <b style={{ color: 'var(--text)' }}>{about.nodeVersion}</b>
-          </div>
-          <div
-            style={{
-              fontFamily: 'ui-monospace, monospace',
-              fontSize: 10,
-              wordBreak: 'break-all',
-              marginTop: 4,
-            }}
-            title={about.storePath}
-          >
-            {about.storePath}
-          </div>
-        </div>
-      )}
-    </Panel>
-  )
-}
-
-function EditorPane({
-  file,
-  index,
-  saveMsg,
-  onSave,
-  onClose,
-}: {
-  file: ScriptFile
-  index: number
-  saveMsg: string | null
-  onSave: () => void
-  onClose: () => void
-}) {
-  const [local, setLocal] = useState(file.content)
-  const lastPathRef = useRef(file.path)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  useEffect(() => {
-    if (lastPathRef.current !== file.path) {
-      setLocal(file.content)
-      lastPathRef.current = file.path
-    }
-  }, [file.path, file.content])
-
-  useEffect(
-    () => () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    },
-    [],
-  )
-
-  const handleChange = (v: string) => {
-    setLocal(v)
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => {
-      debounceRef.current = null
-      window.api.updateContent(index, v)
-    }, 200)
-  }
-
-  const flush = () => {
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current)
-      debounceRef.current = null
-      window.api.updateContent(index, local)
-    }
-  }
-
-  return (
-    <div className="editor">
-      <div className="editor__header">
-        <span>
-          editing <b>{file.name}</b>
-          {file.path.startsWith('mem://') && (
-            <span style={{ color: 'var(--muted)' }}> (unsaved)</span>
-          )}
-        </span>
-        <div style={{ flex: 1 }} />
-        {saveMsg && <span className="editor__msg">{saveMsg}</span>}
-        <button
-          className="btn"
-          onClick={() => {
-            flush()
-            onSave()
-          }}
-        >
-          💾 Save
-        </button>
-        <button
-          className="btn btn--ghost"
-          onClick={() => {
-            flush()
-            onClose()
-          }}
-        >
-          Close
-        </button>
-      </div>
-      <textarea
-        className="editor__area"
-        value={local}
-        onChange={(e) => handleChange(e.target.value)}
-        onBlur={flush}
-        spellCheck={false}
-        placeholder="Type your script…"
+    <Panel title="Run & pacing">
+      <Range
+        label="Manual speed"
+        value={snapshot.scrollSpeed}
+        min={5}
+        max={400}
+        step={1}
+        format={(value) => `${Math.round(value)} px/s`}
+        onChange={(scrollSpeed) => patch({ scrollSpeed, targetMode: null, targetDurationSec: null, targetWpm: null })}
       />
-    </div>
+      <div className="row">
+        <label htmlFor="target-duration">Target time</label>
+        <input id="target-duration" type="text" placeholder="mm:ss" value={durationInput} onChange={(event) => setDurationInput(event.target.value)} onBlur={commitDuration} onKeyDown={(event) => event.key === 'Enter' && event.currentTarget.blur()} />
+      </div>
+      <div className="row">
+        <label htmlFor="target-wpm">Target WPM</label>
+        <input id="target-wpm" type="number" min={20} max={2000} value={wpmInput} onChange={(event) => setWpmInput(event.target.value)} onBlur={commitWpm} onKeyDown={(event) => event.key === 'Enter' && event.currentTarget.blur()} />
+      </div>
+      {error && <p className="inline-error" role="alert">{error}</p>}
+      <p className="form-hint">
+        {range > 0 ? `${wordCount.toLocaleString()} words · ${formatDuration(duration)} at ${Math.round(currentWpm)} WPM` : 'The estimate appears after the overlay measures the script.'}
+      </p>
+      {snapshot.targetMode && <button type="button" className="btn btn--ghost" onClick={() => patch({ targetMode: null, targetDurationSec: null, targetWpm: null })}>Clear {snapshot.targetMode} target</button>}
+      <Toggle label="Countdown before play" checked={snapshot.countdownEnabled} onChange={(countdownEnabled) => patch({ countdownEnabled })} />
+      <Range label="Countdown" value={snapshot.countdownSeconds} min={1} max={10} step={1} disabled={!snapshot.countdownEnabled} format={(value) => `${value}s`} onChange={(countdownSeconds) => patch({ countdownSeconds })} />
+      <Toggle label="Show chronometer" checked={snapshot.showChronometer} onChange={(showChronometer) => patch({ showChronometer })} />
+    </Panel>
   )
 }
 
-function Toggle(props: {
-  label: string
-  checked: boolean
-  onChange: (v: boolean) => void
-  hint?: string
-  disabled?: boolean
-}) {
-  return (
-    <div
-      className="row"
-      style={{ alignItems: 'flex-start', opacity: props.disabled ? 0.5 : 1 }}
-    >
-      <label className="toggle" style={{ flex: 1, cursor: props.disabled ? 'not-allowed' : 'pointer' }}>
-        <input
-          type="checkbox"
-          checked={props.checked}
-          disabled={props.disabled}
-          onChange={(e) => props.onChange(e.target.checked)}
-        />
-        <span>
-          {props.label}
-          {props.hint && (
-            <div style={{ color: 'var(--muted)', fontSize: 10, marginTop: 2 }}>{props.hint}</div>
-          )}
-        </span>
-      </label>
-    </div>
-  )
+function fileName(path: string): string {
+  return path.split(/[\\/]/).pop() || path
+}
+
+function percent(value: number): string {
+  return `${Math.round(value * 100)}%`
+}
+
+function parseDuration(input: string): number | null {
+  const value = input.trim()
+  const hms = value.match(/^(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)$/)
+  if (hms) {
+    const [, hours, minutes, seconds] = hms
+    const result = Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds)
+    return Number(minutes) < 60 && Number(seconds) < 60 && result > 0 ? result : null
+  }
+  const ms = value.match(/^(\d+):(\d{1,2}(?:\.\d+)?)$/)
+  if (ms) {
+    const result = Number(ms[1]) * 60 + Number(ms[2])
+    return Number(ms[2]) < 60 && result > 0 ? result : null
+  }
+  const minutes = Number(value)
+  return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 : null
+}
+
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0:00'
+  const total = Math.round(seconds)
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const remainder = total % 60
+  return hours > 0
+    ? `${hours}:${minutes.toString().padStart(2, '0')}:${remainder.toString().padStart(2, '0')}`
+    : `${minutes}:${remainder.toString().padStart(2, '0')}`
 }
