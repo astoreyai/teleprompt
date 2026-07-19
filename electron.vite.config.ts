@@ -7,7 +7,13 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       outDir: 'out/main',
-      lib: { entry: 'src/main/index.ts' },
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          'parser-worker': resolve(__dirname, 'src/main/parser/worker.ts'),
+        },
+        output: { entryFileNames: '[name].js' },
+      },
     },
   },
   preload: {

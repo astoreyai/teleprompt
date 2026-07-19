@@ -1,332 +1,54 @@
-import { app, dialog, ipcMain } from 'electron'
-import { readFile, stat, writeFile } from 'node:fs/promises'
-import { basename, extname } from 'node:path'
-
-const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10 MB
-import type { AppState, BannerPosition, HotkeyCommand, ScriptFile } from '../shared/types.js'
-import { DEFAULT_HOTKEYS } from '../shared/types.js'
-import { getHotkeyStatus, rebindHotkeys, syncClickerHotkeys } from './hotkeys.js'
-import { applyPacingTarget, setLastGeom } from './pacing.js'
-import {
-  exportPersisted,
-  getState,
-  getStorePath,
-  importPersisted,
-  pushRecent,
-  resetState,
-  setState,
-} from './store.js'
+import { app, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { basename, extname, parse } from 'node:path'
+import type { DocumentContent, DocumentId } from '../shared/contracts.js'
+import type { PreferencePatch, RendererRole } from '../shared/ipc.js'
+import { DEFAULT_HOTKEYS, type HotkeyCommand } from '../shared/types.js'
+import type { AppStore } from './application/app-store.js'
+import type { AppController } from './application/controller.js'
+import { exportablePreferences, sanitizePreferencePatch } from './application/preferences.js'
+import type { DocumentImportService } from './documents/import-service.js'
+import type { DocumentSaveService } from './documents/save-service.js'
+import { saveTextAtomically } from './files/atomic-write.js'
+import { supportedExtensions } from './files/file-policy.js'
+import { readBoundedRegularFile } from './files/safe-reader.js'
+import type { HotkeyManager } from './hotkeys.js'
+import type { PacingService } from './pacing.js'
+import { presentationCapability } from './presentation.js'
+import { authorizeIpc, IPC_POLICY, type IpcChannel } from './platform/ipc-policy.js'
+import { projectOverlaySnapshot } from './platform/overlay-projection.js'
 import {
   applyOverlayEffects,
-  broadcastState,
-  createControls,
+  broadcastActiveDocument,
+  broadcastSnapshot,
+  focusControls,
+  getRendererRole,
+  getRendererUrl,
   getWindows,
   recreateOverlay,
+  sendOverlayGeometry,
+  sendProgress,
+  setOverlayVisible,
 } from './windows.js'
 
-const ALLOWED_EXTS = new Set([
-  '.txt',
-  '.md',
-  '.markdown',
-  '.rtf',
-  '.docx',
-  '.odt',
-  '.pdf',
-  '.html',
-  '.htm',
-  '.fountain',
-  '.srt',
-  '.vtt',
-])
-
-const sessionAllowedPaths = new Set<string>()
-
-const PATCHABLE_KEYS: ReadonlyArray<keyof AppState> = [
-  'scrollSpeed',
-  'opacity',
-  'bgDim',
-  'fontSize',
-  'fontFamily',
-  'fontColor',
-  'textShadow',
-  'mirrorH',
-  'mirrorV',
-  'eyeLinePosition',
-  'showEyeLine',
-  'focusMode',
-  'clickThrough',
-  'hideFromCapture',
-  'voicePacing',
-  'markdown',
-  'bannerMode',
-  'bannerPosition',
-  'editMode',
-  'clickerMode',
-  'clickerStep',
-  'showChronometer',
-  'voiceConsent',
-  'countdownEnabled',
-  'countdownSeconds',
-  'showCueHud',
-  'drivePresentation',
-  'aboveFullscreen',
-  'targetMode',
-  'targetDurationSec',
-  'targetWpm',
-  'hotkeyBindings',
-  'playing',
-  'scrollPosition',
-  'currentFileIndex',
-]
-
-function sanitizePatch(raw: unknown): Partial<AppState> {
-  if (!raw || typeof raw !== 'object') return {}
-  const r = raw as Record<string, unknown>
-  const out: Partial<AppState> = {}
-  for (const key of PATCHABLE_KEYS) {
-    if (!(key in r)) continue
-    const v = r[key]
-    switch (key) {
-      case 'fontFamily':
-      case 'fontColor':
-        if (typeof v === 'string' && v.length < 200) out[key] = v
-        break
-      case 'bannerPosition':
-        if (v === 'top' || v === 'bottom') out.bannerPosition = v as BannerPosition
-        break
-      case 'scrollSpeed':
-        if (typeof v === 'number' && Number.isFinite(v))
-          out.scrollSpeed = Math.max(1, Math.min(2000, v))
-        break
-      case 'fontSize':
-        if (typeof v === 'number' && Number.isFinite(v))
-          out.fontSize = Math.max(8, Math.min(400, v))
-        break
-      case 'countdownSeconds':
-        if (typeof v === 'number' && Number.isFinite(v))
-          out.countdownSeconds = Math.max(0, Math.min(10, Math.floor(v)))
-        break
-      case 'targetMode':
-        if (v === 'duration' || v === 'wpm' || v === null) out.targetMode = v
-        break
-      case 'targetDurationSec':
-        if (v === null) out.targetDurationSec = null
-        else if (typeof v === 'number' && Number.isFinite(v) && v > 0)
-          out.targetDurationSec = Math.min(36000, v)
-        break
-      case 'targetWpm':
-        if (v === null) out.targetWpm = null
-        else if (typeof v === 'number' && Number.isFinite(v) && v > 0)
-          out.targetWpm = Math.min(2000, v)
-        break
-      case 'hotkeyBindings': {
-        if (!v || typeof v !== 'object') break
-        const m = v as Record<string, unknown>
-        const sanitized: Record<HotkeyCommand, string> = { ...DEFAULT_HOTKEYS }
-        for (const cmd of Object.keys(DEFAULT_HOTKEYS) as HotkeyCommand[]) {
-          const value = m[cmd]
-          if (typeof value === 'string' && value.length > 0 && value.length < 80) {
-            sanitized[cmd] = value
-          }
-        }
-        out.hotkeyBindings = sanitized
-        break
-      }
-      case 'opacity':
-      case 'bgDim':
-      case 'eyeLinePosition':
-      case 'scrollPosition':
-      case 'clickerStep':
-        if (typeof v === 'number' && Number.isFinite(v))
-          out[key] = Math.max(0, Math.min(1, v)) as never
-        break
-      case 'currentFileIndex': {
-        if (typeof v !== 'number' || !Number.isFinite(v)) break
-        const len = getState().files.length
-        out.currentFileIndex = Math.max(0, Math.min(Math.floor(v), Math.max(0, len - 1)))
-        break
-      }
-      default:
-        if (typeof v === 'boolean') out[key] = v as never
-    }
-  }
-  return out
+export type IpcDependencies = {
+  store: AppStore
+  controller: AppController
+  importer: DocumentImportService
+  saver: DocumentSaveService
+  hotkeys: HotkeyManager
+  pacing: PacingService
 }
 
-function isAllowedPath(path: string): boolean {
-  if (typeof path !== 'string' || !path) return false
-  if (sessionAllowedPaths.has(path)) return true
-  if (getState().recentFiles.includes(path)) return true
-  return ALLOWED_EXTS.has(extname(path).toLowerCase())
-}
+const registeredChannels = new Set<IpcChannel>()
 
-export function registerIpc() {
-  ipcMain.handle('state:get', () => getState())
-  ipcMain.handle('hotkeys:status', () => getHotkeyStatus())
-  ipcMain.handle('presentation:status', async () => {
-    const { presentationCapability } = await import('./presentation.js')
-    return presentationCapability()
-  })
-
-  ipcMain.handle('platform:info', () => ({
-    platform: process.platform,
-    displayServer:
-      process.platform === 'linux'
-        ? (process.env.XDG_SESSION_TYPE ?? 'unknown')
-        : process.platform,
-    contentProtectionSupported: process.platform !== 'linux',
-  }))
-
-  ipcMain.handle('state:patch', (_e, patch: unknown) => {
-    const before = getState()
-    const clean = sanitizePatch(patch)
-    setState(clean)
-    applyPacingTarget()
-    applyOverlayEffects()
-    const after = getState()
-    if ('clickerMode' in clean) syncClickerHotkeys(after.clickerMode)
-    if ('hotkeyBindings' in clean) rebindHotkeys()
-    if ('aboveFullscreen' in clean && clean.aboveFullscreen !== before.aboveFullscreen) {
-      recreateOverlay()
-    }
-    broadcastState(after)
-    return after
-  })
-
-  ipcMain.handle('files:open', async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Open script files',
-      properties: ['openFile', 'multiSelections'],
-      filters: [
-        {
-          name: 'Text & docs',
-          extensions: [
-            'txt',
-            'md',
-            'markdown',
-            'rtf',
-            'docx',
-            'odt',
-            'pdf',
-            'html',
-            'htm',
-            'fountain',
-            'srt',
-            'vtt',
-          ],
-        },
-        { name: 'All', extensions: ['*'] },
-      ],
-    })
-    if (result.canceled) return { loaded: [], errors: [] }
-    const loaded: ScriptFile[] = []
-    const errors: { path: string; error: string }[] = []
-    for (const path of result.filePaths) {
-      sessionAllowedPaths.add(path)
-      const r = await loadFileSafe(path)
-      if (r.ok) loaded.push(r.file)
-      else errors.push({ path: r.path, error: r.error })
-    }
-    if (loaded.length) {
-      const state = getState()
-      const next = setState({ files: [...state.files, ...loaded] })
-      broadcastState(next)
-    }
-    return { loaded, errors }
-  })
-
-  ipcMain.handle('files:loadPath', async (_e, path: unknown) => {
-    if (typeof path !== 'string' || !isAllowedPath(path))
-      return { ok: false, error: 'path not allowed' }
-    const r = await loadFileSafe(path)
-    if (!r.ok) return { ok: false, error: r.error }
-    const state = getState()
-    const next = setState({ files: [...state.files, r.file] })
-    broadcastState(next)
-    return { ok: true, file: r.file }
-  })
-
-  ipcMain.handle('files:remove', (_e, index: unknown) => {
-    if (typeof index !== 'number' || !Number.isFinite(index)) return
-    const state = getState()
-    const i = Math.floor(index)
-    if (i < 0 || i >= state.files.length) return
-    const files = state.files.filter((_, j) => j !== i)
-    const currentFileIndex = Math.min(state.currentFileIndex, Math.max(0, files.length - 1))
-    const next = setState({ files, currentFileIndex, scrollPosition: 0, playing: false })
-    broadcastState(next)
-  })
-
-  ipcMain.handle('files:select', (_e, index: unknown) => {
-    if (typeof index !== 'number' || !Number.isFinite(index)) return
-    const state = getState()
-    const i = Math.max(0, Math.min(Math.floor(index), Math.max(0, state.files.length - 1)))
-    const next = setState({ currentFileIndex: i, scrollPosition: 0, playing: false })
-    broadcastState(next)
-  })
-
-  ipcMain.handle('files:reload', async () => {
-    const state = getState()
-    const cur = state.files[state.currentFileIndex]
-    if (!cur) return
-    if (cur.path.startsWith('mem://')) return
-    const reloaded = await loadFile(cur.path)
-    if (!reloaded) return
-    const files = state.files.map((f, i) => (i === state.currentFileIndex ? reloaded : f))
-    const next = setState({ files })
-    broadcastState(next)
-  })
-
-  ipcMain.handle('playback:toggle', () => {
-    const state = getState()
-    const next = setState({ playing: !state.playing })
-    broadcastState(next)
-  })
-
-  ipcMain.handle('scroll:set', (_e, position: unknown) => {
-    if (typeof position !== 'number' || !Number.isFinite(position)) return
-    const next = setState({ scrollPosition: Math.max(0, Math.min(1, position)) })
-    broadcastState(next)
-  })
-
-  ipcMain.handle(
-    'files:loadContent',
-    async (_e, name: unknown, content: unknown, path: unknown) => {
-      if (typeof name !== 'string' || typeof content !== 'string') return null
-      const safeName = name.slice(0, 200)
-      let safePath: string
-      if (typeof path === 'string' && isAllowedPath(path)) {
-        safePath = path
-        sessionAllowedPaths.add(path)
-        pushRecent(path)
-      } else {
-        safePath = `mem://${safeName}-${Date.now()}`
-      }
-      const file: ScriptFile = { path: safePath, name: safeName, content }
-      const state = getState()
-      const next = setState({ files: [...state.files, file] })
-      broadcastState(next)
-      return file
-    },
-  )
-
-  ipcMain.handle('files:updateContent', (_e, index: unknown, content: unknown) => {
-    if (typeof index !== 'number' || typeof content !== 'string') return
-    const state = getState()
-    const i = Math.floor(index)
-    if (i < 0 || i >= state.files.length) return
-    const files = state.files.map((f, j) => (j === i ? { ...f, content } : f))
-    const next = setState({ files })
-    broadcastState(next)
-  })
-
+export function registerIpc(dependencies: IpcDependencies): void {
+  if (registeredChannels.size > 0) throw new Error('IPC is already registered')
   let dragSession: {
     startScreenX: number
     startScreenY: number
     startWinX: number
     startWinY: number
   } | null = null
-
   let resizeSession: {
     startScreenX: number
     startScreenY: number
@@ -334,311 +56,566 @@ export function registerIpc() {
     startH: number
     startX: number
     startY: number
-    edge: string
+    edge: ResizeEdge
   } | null = null
 
-  ipcMain.handle('drag:start', (_e, sx: unknown, sy: unknown) => {
-    if (typeof sx !== 'number' || typeof sy !== 'number') return
-    const win = getWindows().overlay
-    if (!win || win.isDestroyed()) return
-    const b = win.getBounds()
-    dragSession = { startScreenX: sx, startScreenY: sy, startWinX: b.x, startWinY: b.y }
+  secureHandle('app:bootstrap', dependencies, (event) => {
+    const snapshot = dependencies.store.getSnapshot()
+    const activeDocument = activeContent(dependencies.store)
+    if (getRendererRole(event.sender) === 'overlay') {
+      return {
+        snapshot: projectOverlaySnapshot(snapshot),
+        activeDocument,
+        hasStartupIssues: dependencies.store.getIssues().length > 0,
+      }
+    }
+    return { snapshot, activeDocument, startupIssues: dependencies.store.getIssues() }
   })
 
-  ipcMain.handle('drag:update', (_e, sx: unknown, sy: unknown) => {
-    if (!dragSession || typeof sx !== 'number' || typeof sy !== 'number') return
-    const win = getWindows().overlay
-    if (!win || win.isDestroyed()) return
-    win.setPosition(
-      Math.round(dragSession.startWinX + (sx - dragSession.startScreenX)),
-      Math.round(dragSession.startWinY + (sy - dragSession.startScreenY)),
+  secureHandle('documents:open', dependencies, async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Open script files',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Scripts and documents', extensions: supportedExtensions() },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    })
+    if (result.canceled) return { loaded: [], errors: [] }
+    const loaded = []
+    const errors: Array<{ name: string; error: string }> = []
+    for (const path of result.filePaths) {
+      try {
+        const imported = await dependencies.importer.loadPath(path)
+        loaded.push(await dependencies.store.addImportedDocument(imported, loaded.length === 0))
+      } catch (error) {
+        errors.push({ name: basename(path), error: formatError(error) })
+      }
+    }
+    if (loaded.length > 0) publish(dependencies, true)
+    return { loaded, errors }
+  })
+
+  secureHandle('documents:openRecent', dependencies, async (_event, raw) => {
+    const path = requirePath(raw)
+    if (!dependencies.store.getSnapshot().recentFiles.includes(path)) {
+      return { ok: false, error: 'recent file grant is no longer valid' }
+    }
+    return importOne(dependencies, path)
+  })
+
+  secureHandle('documents:openDropped', dependencies, async (_event, raw) => {
+    return importOne(dependencies, requirePath(raw))
+  })
+
+  secureHandle('documents:create', dependencies, async (_event, raw) => {
+    const request = requireRecord(raw)
+    const name = requireString(request.name, 'name', 200)
+    const content = requireString(request.content, 'content', 10 * 1024 * 1024)
+    const format = request.format
+    if (format !== 'text' && format !== 'markdown' && format !== 'fountain') {
+      throw new Error('invalid create format')
+    }
+    const document = await dependencies.store.createDocument(name, content, format)
+    publish(dependencies, true)
+    return document
+  })
+
+  secureHandle('documents:select', dependencies, (_event, raw) => {
+    const id = requireId(raw)
+    const ok = dependencies.controller.selectDocument(id)
+    if (ok) {
+      dependencies.pacing.applyTarget()
+      publish(dependencies, true)
+    }
+    return { ok }
+  })
+
+  secureHandle('documents:remove', dependencies, async (_event, raw) => {
+    const request = requireRecord(raw)
+    const result = await dependencies.store.removeDocument(
+      requireId(request.id),
+      request.discardDirty === true,
     )
+    if (result.ok) publish(dependencies, true)
+    return result
   })
 
-  ipcMain.handle('drag:end', () => {
-    dragSession = null
+  secureHandle('documents:update', dependencies, async (_event, raw) => {
+    const request = requireRecord(raw)
+    const result = await dependencies.store.updateDocument({
+      id: requireId(request.id),
+      expectedRevision: requireInteger(request.expectedRevision, 0, Number.MAX_SAFE_INTEGER),
+      content: requireString(request.content, 'content', 10 * 1024 * 1024),
+    })
+    if (result.ok) publish(dependencies, true)
+    return result
   })
 
-  ipcMain.handle('resize:start', (_e, sx: unknown, sy: unknown, edge: unknown) => {
-    if (typeof sx !== 'number' || typeof sy !== 'number' || typeof edge !== 'string') return
-    const win = getWindows().overlay
-    if (!win || win.isDestroyed()) return
-    const b = win.getBounds()
-    resizeSession = {
-      startScreenX: sx,
-      startScreenY: sy,
-      startW: b.width,
-      startH: b.height,
-      startX: b.x,
-      startY: b.y,
-      edge,
+  secureHandle('documents:save', dependencies, async (_event, raw) => {
+    const request = requireRecord(raw)
+    const id = requireId(request.id)
+    const forceSaveAs = request.saveAs === true
+    const document = dependencies.store.getDocument(id)
+    if (!document) return { ok: false, reason: 'not-found' }
+    let targetPath: string | undefined
+    if (document.saveMode === 'save-as' || forceSaveAs) {
+      const stem = parse(document.name).name || 'teleprompt-script'
+      const extension = forceSaveAs && document.saveMode === 'overwrite'
+        ? (extname(document.name) || '.txt')
+        : '.md'
+      const result = await dialog.showSaveDialog({
+        title: forceSaveAs ? 'Save script copy' : 'Save extracted script as text',
+        defaultPath: `${stem}${forceSaveAs ? '-copy' : ''}${extension}`,
+        filters: [
+          { name: 'Markdown', extensions: ['md'] },
+          { name: 'Plain text', extensions: ['txt'] },
+          { name: 'Fountain', extensions: ['fountain'] },
+        ],
+      })
+      if (result.canceled || !result.filePath) return { ok: false, reason: 'cancelled' }
+      targetPath = result.filePath
     }
+    const saved = await dependencies.store.saveDocument(id, dependencies.saver, targetPath)
+    if (!saved.ok) {
+      const reason = saved.reason === 'save-as-required' ? 'invalid-target' : saved.reason
+      return { ok: false, reason, ...('error' in saved ? { error: saved.error } : {}) }
+    }
+    publish(dependencies, true)
+    const meta = dependencies.store.getSnapshot().documents.find((item) => item.id === id)
+    return meta ? { ok: true, document: meta } : { ok: false, reason: 'not-found' }
   })
 
-  ipcMain.handle('resize:update', (_e, sx: unknown, sy: unknown) => {
-    if (!resizeSession || typeof sx !== 'number' || typeof sy !== 'number') return
-    const win = getWindows().overlay
-    if (!win || win.isDestroyed()) return
-    const dx = sx - resizeSession.startScreenX
-    const dy = sy - resizeSession.startScreenY
-    let { startX, startY, startW, startH, edge } = resizeSession
-    let newX = startX
-    let newY = startY
-    let newW = startW
-    let newH = startH
-    if (edge.includes('e')) newW = startW + dx
-    if (edge.includes('s')) newH = startH + dy
-    if (edge.includes('w')) {
-      newX = startX + dx
-      newW = startW - dx
-    }
-    if (edge.includes('n')) {
-      newY = startY + dy
-      newH = startH - dy
-    }
-    newW = Math.max(200, Math.min(8000, newW))
-    newH = Math.max(80, Math.min(8000, newH))
-    win.setBounds({ x: Math.round(newX), y: Math.round(newY), width: Math.round(newW), height: Math.round(newH) })
+  secureHandle('documents:reload', dependencies, async (_event, raw) => {
+    const request = requireRecord(raw)
+    const result = await dependencies.store.reloadDocument(
+      requireId(request.id),
+      request.discardDirty === true,
+      dependencies.importer,
+    )
+    if (result.ok) publish(dependencies, true)
+    return result
   })
 
-  ipcMain.handle('resize:end', () => {
-    resizeSession = null
+  secureHandle('playback:toggle', dependencies, () => {
+    const result = dependencies.controller.togglePlayback()
+    broadcastSnapshot(dependencies.store.getSnapshot())
+    return result
   })
 
-  ipcMain.handle('overlay:reportGeom', (_e, geom: unknown) => {
-    if (!geom || typeof geom !== 'object') return
-    const g = geom as { textH?: unknown; viewportH?: unknown }
-    if (typeof g.textH !== 'number' || typeof g.viewportH !== 'number') return
-    const payload = {
-      textH: Math.max(0, Math.floor(g.textH)),
-      viewportH: Math.max(0, Math.floor(g.viewportH)),
-    }
-    setLastGeom(payload)
-    const { controls } = getWindows()
-    if (controls && !controls.isDestroyed()) {
-      controls.webContents.send('overlay:geom', payload)
-    }
-    if (applyPacingTarget()) broadcastState(getState())
+  secureHandle('playback:restart', dependencies, () => {
+    dependencies.controller.restart()
+    broadcastSnapshot(dependencies.store.getSnapshot())
   })
 
-  ipcMain.handle('controls:focus', () => {
-    let { controls } = getWindows()
-    if (!controls || controls.isDestroyed()) {
-      controls = createControls()
-    }
-    if (controls.isMinimized()) controls.restore()
-    controls.show()
-    controls.focus()
+  secureHandle('playback:seek', dependencies, (_event, raw) => {
+    dependencies.controller.seek(requireNumber(raw, 0, 1))
+    broadcastSnapshot(dependencies.store.getSnapshot())
   })
 
-  ipcMain.handle('controls:toggle', () => {
-    let { controls } = getWindows()
-    if (!controls || controls.isDestroyed()) {
-      controls = createControls()
-      controls.show()
-      controls.focus()
-      return
+  secureHandle('playback:checkpoint', dependencies, (_event, raw) => {
+    const request = requireRecord(raw)
+    const result = dependencies.controller.checkpoint({
+      documentId: requireId(request.documentId),
+      revision: requireInteger(request.revision, 0, Number.MAX_SAFE_INTEGER),
+      sessionId: requireString(request.sessionId, 'sessionId', 128),
+      position: requireNumber(request.position, 0, 1),
+      terminal: request.terminal === true,
+    })
+    if (result.ok) {
+      const position = dependencies.store.getSnapshot().scrollPosition
+      sendProgress(position)
+      if (request.terminal || position >= 1) broadcastSnapshot(dependencies.store.getSnapshot())
     }
-    if (controls.isVisible() && !controls.isMinimized()) {
-      controls.hide()
-    } else {
-      if (controls.isMinimized()) controls.restore()
-      controls.show()
-      controls.focus()
-    }
+    return result
   })
 
-  ipcMain.handle('settings:reset', () => {
-    const next = resetState()
-    rebindHotkeys()
+  secureHandle('preferences:update', dependencies, (_event, raw) => {
+    const before = dependencies.store.getSnapshot()
+    const patch = sanitizePreferencePatch(raw)
+    const after = dependencies.store.patchState(patch)
+    dependencies.pacing.applyTarget()
+    if (patch.aboveFullscreen !== undefined && patch.aboveFullscreen !== before.aboveFullscreen) {
+      recreateOverlay()
+    }
     applyOverlayEffects()
-    broadcastState(next)
-    return next
+    broadcastSnapshot(dependencies.store.getSnapshot())
+    return after
   })
 
-  ipcMain.handle('settings:export', async () => {
-    const persisted = exportPersisted()
+  secureHandle('preferences:reset', dependencies, () => {
+    const snapshot = dependencies.store.resetPreferences()
+    dependencies.hotkeys.register()
+    recreateOverlay()
+    broadcastSnapshot(snapshot)
+    return snapshot
+  })
+
+  secureHandle('preferences:clearRecent', dependencies, () => {
+    const snapshot = dependencies.store.patchState({ recentFiles: [] })
+    broadcastSnapshot(snapshot)
+    return snapshot
+  })
+
+  secureHandle('preferences:export', dependencies, async () => {
     const result = await dialog.showSaveDialog({
-      title: 'Export Teleprompt config',
-      defaultPath: 'teleprompt-config.json',
+      title: 'Export Teleprompt preferences',
+      defaultPath: 'teleprompt-preferences.json',
       filters: [{ name: 'JSON', extensions: ['json'] }],
     })
     if (result.canceled || !result.filePath) return { ok: false, error: 'cancelled' }
     try {
-      await writeFile(result.filePath, JSON.stringify(persisted, null, 2), 'utf8')
-      return { ok: true, path: result.filePath }
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : 'write failed' }
+      const saved = await saveTextAtomically({
+        targetPath: result.filePath,
+        content: `${JSON.stringify(exportablePreferences(dependencies.store.getSnapshot()), null, 2)}\n`,
+      })
+      return saved.ok
+        ? { ok: true, path: result.filePath }
+        : { ok: false, error: 'error' in saved ? saved.error : saved.reason }
+    } catch (error) {
+      return { ok: false, error: formatError(error) }
     }
   })
 
-  ipcMain.handle('settings:import', async () => {
+  secureHandle('preferences:import', dependencies, async () => {
     const result = await dialog.showOpenDialog({
-      title: 'Import Teleprompt config',
+      title: 'Import Teleprompt preferences',
       properties: ['openFile'],
       filters: [{ name: 'JSON', extensions: ['json'] }],
     })
     if (result.canceled || !result.filePaths[0]) return { ok: false, error: 'cancelled' }
     try {
-      const raw = await readFile(result.filePaths[0], 'utf8')
-      const parsed = JSON.parse(raw)
-      const next = importPersisted(parsed)
-      rebindHotkeys()
+      const file = await readBoundedRegularFile(result.filePaths[0], 1024 * 1024)
+      const raw = JSON.parse(file.bytes.toString('utf8')) as unknown
+      const record = requireRecord(raw)
+      if (record.version !== 1) return { ok: false, error: 'unsupported preference version' }
+      const patch = sanitizePreferencePatch(record.preferences)
+      delete patch.editMode
+      dependencies.store.patchState(patch)
+      const bindings = sanitizeHotkeys(record.hotkeyBindings)
+      if (bindings) dependencies.hotkeys.rebind(bindings)
       applyOverlayEffects()
-      broadcastState(next)
+      broadcastSnapshot(dependencies.store.getSnapshot())
       return { ok: true }
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : 'import failed' }
+    } catch (error) {
+      return { ok: false, error: formatError(error) }
     }
   })
 
-  ipcMain.handle('settings:about', () => ({
+  secureHandle('preferences:about', dependencies, () => ({
     appVersion: app.getVersion(),
     electronVersion: process.versions.electron,
     nodeVersion: process.versions.node,
-    storePath: getStorePath(),
+    storePath: dependencies.store.getStorePath(),
   }))
 
-  ipcMain.handle('files:save', async () => {
-    const state = getState()
-    const cur = state.files[state.currentFileIndex]
-    if (!cur) return { ok: false, error: 'no current file' }
+  secureHandle('overlay:setVisible', dependencies, (_event, raw) => {
+    const visible = requireBoolean(raw)
+    dependencies.store.patchState({ overlayVisible: visible })
+    setOverlayVisible(visible)
+    broadcastSnapshot(dependencies.store.getSnapshot())
+  })
 
-    const isMem = cur.path.startsWith('mem://')
-    const inSession = sessionAllowedPaths.has(cur.path)
-    const needsDialog = isMem || !inSession
+  secureHandle('overlay:reportGeometry', dependencies, (_event, raw) => {
+    const geometry = requireGeometry(raw)
+    const changed = dependencies.pacing.setGeometry(geometry)
+    sendOverlayGeometry(geometry)
+    if (changed) broadcastSnapshot(dependencies.store.getSnapshot())
+  })
 
-    let targetPath = cur.path
-    if (needsDialog) {
-      const result = await dialog.showSaveDialog({
-        title: 'Save script',
-        defaultPath: isMem ? cur.name : cur.path,
-        filters: [
-          { name: 'Text', extensions: ['txt', 'md'] },
-          { name: 'All', extensions: ['*'] },
-        ],
-      })
-      if (result.canceled || !result.filePath) return { ok: false, error: 'cancelled' }
-      targetPath = result.filePath
-      sessionAllowedPaths.add(targetPath)
-    }
-
-    try {
-      await writeFile(targetPath, cur.content, 'utf8')
-      if (targetPath !== cur.path) {
-        const renamed: ScriptFile = {
-          path: targetPath,
-          name: basename(targetPath),
-          content: cur.content,
-        }
-        const files = state.files.map((f, i) => (i === state.currentFileIndex ? renamed : f))
-        pushRecent(targetPath)
-        const next = setState({ files })
-        broadcastState(next)
-      }
-      return { ok: true }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'write failed'
-      return { ok: false, error: msg }
+  secureHandle('overlay:dragStart', dependencies, (_event, raw) => {
+    const [screenX, screenY] = requirePoint(raw)
+    const win = getWindows().overlay
+    if (!win || win.isDestroyed()) return
+    const bounds = win.getBounds()
+    dragSession = {
+      startScreenX: screenX,
+      startScreenY: screenY,
+      startWinX: bounds.x,
+      startWinY: bounds.y,
     }
   })
-}
 
-type LoadResult =
-  | { ok: true; file: ScriptFile }
-  | { ok: false; error: string; path: string }
+  secureHandle('overlay:dragUpdate', dependencies, (_event, raw) => {
+    if (!dragSession) return
+    const [screenX, screenY] = requirePoint(raw)
+    const win = getWindows().overlay
+    if (!win || win.isDestroyed()) return
+    win.setPosition(
+      Math.round(dragSession.startWinX + screenX - dragSession.startScreenX),
+      Math.round(dragSession.startWinY + screenY - dragSession.startScreenY),
+    )
+  })
 
-async function loadFile(path: string): Promise<ScriptFile | null> {
-  const r = await loadFileSafe(path)
-  return r.ok ? r.file : null
-}
+  secureHandle('overlay:dragEnd', dependencies, () => {
+    dragSession = null
+  })
 
-async function loadFileSafe(path: string): Promise<LoadResult> {
-  try {
-    const info = await stat(path)
-    if (!info.isFile()) return { ok: false, error: 'not a regular file', path }
-    if (info.size > MAX_FILE_BYTES)
-      return { ok: false, error: `file too large (>${MAX_FILE_BYTES / 1024 / 1024} MB)`, path }
-    const ext = extname(path).toLowerCase()
-    let content: string
-    if (ext === '.docx') {
-      const mammoth = await import('mammoth')
-      const buf = await readFile(path)
-      const result = await mammoth.extractRawText({ buffer: buf })
-      content = result.value
-    } else if (ext === '.rtf') {
-      const { rtfToText } = await import('./rtf.js')
-      const buf = await readFile(path)
-      content = rtfToText(buf.toString('utf8'))
-    } else if (ext === '.pdf') {
-      try {
-        const { PDFParse } = await import('pdf-parse')
-        const buf = await readFile(path)
-        const parser = new PDFParse({ data: new Uint8Array(buf) })
-        const result = await parser.getText()
-        content = (result.text ?? '').trim()
-        if (!content) {
-          return {
-            ok: false,
-            error: 'No extractable text — PDF appears to be scanned/image-only',
-            path,
-          }
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : 'PDF parse failed'
-        console.error('[pdf]', path, msg)
-        return { ok: false, error: `PDF parse failed: ${msg}`, path }
-      }
-    } else if (ext === '.html' || ext === '.htm') {
-      const { stripHtmlTags } = await import('./html.js')
-      const buf = await readFile(path)
-      content = stripHtmlTags(buf.toString('utf8'))
-    } else if (ext === '.odt') {
-      const { odtToText } = await import('./odt.js')
-      const buf = await readFile(path)
-      content = await odtToText(buf)
-    } else if (ext === '.srt') {
-      const { srtToText } = await import('./subtitles.js')
-      const buf = await readFile(path)
-      content = srtToText(buf.toString('utf8'))
-    } else if (ext === '.vtt') {
-      const { vttToText } = await import('./subtitles.js')
-      const buf = await readFile(path)
-      content = vttToText(buf.toString('utf8'))
-    } else {
-      const buf = await readFile(path)
-      if (containsNullByte(buf))
-        return { ok: false, error: 'binary file (NUL byte detected)', path }
-      content = buf.toString('utf8')
+  secureHandle('overlay:resizeStart', dependencies, (_event, raw) => {
+    const request = requireRecord(raw)
+    const [screenX, screenY] = requirePoint(request)
+    const edge = requireResizeEdge(request.edge)
+    const win = getWindows().overlay
+    if (!win || win.isDestroyed()) return
+    const bounds = win.getBounds()
+    resizeSession = {
+      startScreenX: screenX,
+      startScreenY: screenY,
+      startW: bounds.width,
+      startH: bounds.height,
+      startX: bounds.x,
+      startY: bounds.y,
+      edge,
     }
-    pushRecent(path)
-    sessionAllowedPaths.add(path)
-    return { ok: true, file: { path, name: basename(path), content } }
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'read failed', path }
-  }
+  })
+
+  secureHandle('overlay:resizeUpdate', dependencies, (_event, raw) => {
+    if (!resizeSession) return
+    const [screenX, screenY] = requirePoint(raw)
+    const win = getWindows().overlay
+    if (!win || win.isDestroyed()) return
+    const dx = screenX - resizeSession.startScreenX
+    const dy = screenY - resizeSession.startScreenY
+    let x = resizeSession.startX
+    let y = resizeSession.startY
+    let width = resizeSession.startW
+    let height = resizeSession.startH
+    if (resizeSession.edge.includes('e')) width += dx
+    if (resizeSession.edge.includes('s')) height += dy
+    if (resizeSession.edge.includes('w')) {
+      x += dx
+      width -= dx
+    }
+    if (resizeSession.edge.includes('n')) {
+      y += dy
+      height -= dy
+    }
+    win.setBounds({
+      x: Math.round(x),
+      y: Math.round(y),
+      width: Math.round(Math.max(200, Math.min(8000, width))),
+      height: Math.round(Math.max(80, Math.min(8000, height))),
+    })
+  })
+
+  secureHandle('overlay:resizeEnd', dependencies, () => {
+    resizeSession = null
+  })
+
+  secureHandle('overlay:openEditor', dependencies, () => {
+    dependencies.controller.pause()
+    dependencies.store.patchState({ editMode: true })
+    focusControls()
+    broadcastSnapshot(dependencies.store.getSnapshot())
+  })
+
+  secureHandle('controls:focus', dependencies, () => focusControls())
+
+  secureHandle('voice:grantConsent', dependencies, async () => {
+    dependencies.controller.grantVoiceConsent()
+    await dependencies.store.flush()
+    broadcastSnapshot(dependencies.store.getSnapshot())
+  })
+
+  secureHandle('voice:revokeConsent', dependencies, async () => {
+    dependencies.controller.revokeVoiceConsent()
+    await dependencies.store.flush()
+    broadcastSnapshot(dependencies.store.getSnapshot())
+  })
+
+  secureHandle('voice:request', dependencies, (_event, raw) => {
+    const result = dependencies.controller.requestVoice(requireBoolean(raw))
+    broadcastSnapshot(dependencies.store.getSnapshot())
+    return result
+  })
+
+  secureHandle('voice:status', dependencies, (_event, raw) => {
+    const request = requireRecord(raw)
+    const status = request.status
+    if (status !== 'off' && status !== 'starting' && status !== 'active' && status !== 'error') {
+      throw new Error('invalid voice status')
+    }
+    dependencies.controller.reportVoiceStatus(
+      status,
+      request.error === undefined ? undefined : requireString(request.error, 'voice error', 500),
+    )
+    broadcastSnapshot(dependencies.store.getSnapshot())
+  })
+
+  secureHandle('clicker:setArmed', dependencies, (_event, raw) => {
+    dependencies.hotkeys.setClickerArmed(requireBoolean(raw))
+  })
+
+  secureHandle('presentation:setArmed', dependencies, (_event, raw) => {
+    const enabled = requireBoolean(raw)
+    const capability = presentationCapability()
+    dependencies.store.patchState({ drivePresentation: enabled && capability.ok })
+    broadcastSnapshot(dependencies.store.getSnapshot())
+  })
+
+  secureHandle('presentation:status', dependencies, () => presentationCapability())
+
+  secureHandle('hotkeys:update', dependencies, (_event, raw) => {
+    const bindings = sanitizeHotkeys(raw)
+    if (!bindings) throw new Error('invalid hotkey bindings')
+    dependencies.hotkeys.rebind(bindings)
+  })
+
+  secureHandle('hotkeys:status', dependencies, () => dependencies.hotkeys.getStatus())
+
+  secureHandle('platform:info', dependencies, () => ({
+    platform: process.platform,
+    displayServer:
+      process.platform === 'linux' ? (process.env.XDG_SESSION_TYPE ?? 'unknown') : process.platform,
+    contentProtectionSupported: process.platform !== 'linux',
+  }))
 }
 
-function containsNullByte(buf: Buffer): boolean {
-  const cap = Math.min(buf.length, 64 * 1024)
-  for (let i = 0; i < cap; i++) if (buf[i] === 0) return true
-  return false
+export function unregisterIpc(): void {
+  for (const channel of registeredChannels) ipcMain.removeHandler(channel)
+  registeredChannels.clear()
 }
 
-export function allowSessionPath(path: string): void {
-  sessionAllowedPaths.add(path)
-}
-
-export async function loadPathOnStartup(path: string): Promise<boolean> {
-  sessionAllowedPaths.add(path)
-  const r = await loadFileSafe(path)
-  if (!r.ok) {
-    console.error('[startup-load]', path, r.error)
+export async function loadPathOnStartup(
+  dependencies: IpcDependencies,
+  path: string,
+): Promise<boolean> {
+  try {
+    const imported = await dependencies.importer.loadPath(path)
+    await dependencies.store.addImportedDocument(imported, true)
+    publish(dependencies, true)
+    return true
+  } catch (error) {
+    console.error('[startup-load]', basename(path), formatError(error))
     return false
   }
-  const state = getState()
-  setState({ files: [...state.files, r.file] })
-  applyPacingTarget()
-  broadcastState(getState())
-  return true
+}
+
+function secureHandle(
+  channel: IpcChannel,
+  _dependencies: IpcDependencies,
+  handler: (event: IpcMainInvokeEvent, raw?: unknown) => unknown,
+): void {
+  ipcMain.handle(channel, async (event, raw) => {
+    const senderFrame = event.senderFrame
+    if (!senderFrame) throw new Error('unauthorized IPC request')
+    const role = getRendererRole(event.sender)
+    const expectedUrl = role ? getRendererUrl(role) : null
+    const allowed = authorizeIpc(channel, {
+      role,
+      frameUrl: senderFrame.url,
+      expectedUrl,
+      isMainFrame: senderFrame === senderFrame.top,
+    })
+    if (!allowed) throw new Error('unauthorized IPC request')
+    return handler(event, raw)
+  })
+  registeredChannels.add(channel)
+}
+
+async function importOne(dependencies: IpcDependencies, path: string) {
+  try {
+    const imported = await dependencies.importer.loadPath(path)
+    const document = await dependencies.store.addImportedDocument(imported, true)
+    publish(dependencies, true)
+    return { ok: true, document } as const
+  } catch (error) {
+    return { ok: false, error: formatError(error) } as const
+  }
+}
+
+function publish(dependencies: IpcDependencies, includeDocument: boolean): void {
+  applyOverlayEffects()
+  broadcastSnapshot(dependencies.store.getSnapshot())
+  if (includeDocument) broadcastActiveDocument(activeContent(dependencies.store))
+}
+
+function activeContent(store: AppStore): DocumentContent | null {
+  const document = store.getActiveDocument()
+  return document
+    ? { id: document.id, revision: document.revision, content: document.content }
+    : null
+}
+
+function requireRecord(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('invalid request')
+  return raw as Record<string, unknown>
+}
+
+function requireId(raw: unknown): DocumentId {
+  const value = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>).id : raw
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9._:-]{1,128}$/.test(value)) {
+    throw new Error('invalid document id')
+  }
+  return value
+}
+
+function requirePath(raw: unknown): string {
+  const value = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>).path : raw
+  return requireString(value, 'path', 4096)
+}
+
+function requireString(raw: unknown, label: string, maxLength: number): string {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > maxLength) {
+    throw new Error(`invalid ${label}`)
+  }
+  return raw
+}
+
+function requireNumber(raw: unknown, min: number, max: number): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) throw new Error('invalid number')
+  return Math.max(min, Math.min(max, raw))
+}
+
+function requireInteger(raw: unknown, min: number, max: number): number {
+  return Math.floor(requireNumber(raw, min, max))
+}
+
+function requireBoolean(raw: unknown): boolean {
+  const value = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>).enabled : raw
+  if (typeof value !== 'boolean') throw new Error('invalid boolean')
+  return value
+}
+
+function requireGeometry(raw: unknown): { textH: number; viewportH: number } {
+  const request = requireRecord(raw)
+  return {
+    textH: requireInteger(request.textH, 0, 1_000_000),
+    viewportH: requireInteger(request.viewportH, 0, 100_000),
+  }
+}
+
+function requirePoint(raw: unknown): [number, number] {
+  const request = requireRecord(raw)
+  return [
+    requireNumber(request.screenX, -1_000_000, 1_000_000),
+    requireNumber(request.screenY, -1_000_000, 1_000_000),
+  ]
+}
+
+type ResizeEdge = 'se' | 'sw' | 'ne' | 'nw' | 'n' | 's' | 'e' | 'w'
+function requireResizeEdge(raw: unknown): ResizeEdge {
+  if (raw === 'se' || raw === 'sw' || raw === 'ne' || raw === 'nw' || raw === 'n' || raw === 's' || raw === 'e' || raw === 'w') {
+    return raw
+  }
+  throw new Error('invalid resize edge')
+}
+
+function sanitizeHotkeys(raw: unknown): Record<HotkeyCommand, string> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const record = raw as Record<string, unknown>
+  const result = { ...DEFAULT_HOTKEYS }
+  for (const command of Object.keys(DEFAULT_HOTKEYS) as HotkeyCommand[]) {
+    const accelerator = record[command]
+    if (typeof accelerator !== 'string' || accelerator.length < 1 || accelerator.length > 79) {
+      return null
+    }
+    result[command] = accelerator
+  }
+  if (new Set(Object.values(result)).size !== Object.values(result).length) return null
+  return result
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

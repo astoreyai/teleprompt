@@ -56,6 +56,12 @@ export function indexOfFirstTokenAtOrAfterChar(tokens: Token[], char: number): n
   return lo
 }
 
+export function progressForToken(tokens: Token[], tokenIndex: number, totalChars: number): number {
+  if (tokens.length === 0 || !Number.isFinite(totalChars) || totalChars <= 0) return 0
+  const index = Math.max(0, Math.min(tokens.length - 1, Math.trunc(tokenIndex)))
+  return Math.max(0, Math.min(1, tokens[index].start / totalChars))
+}
+
 export type VoiceMatchOptions = {
   lookaheadTokens?: number
   windowSize?: number

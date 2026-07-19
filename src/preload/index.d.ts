@@ -1,8 +1,9 @@
-import type { Api } from './index.js'
+import type { ControlsApi, OverlayApi } from '../shared/ipc.js'
 
 declare global {
   interface Window {
-    api: Api
+    controlsApi: ControlsApi
+    overlayApi: OverlayApi
   }
 }
 

@@ -1,0 +1,89 @@
+name: verify
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teleprompt-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-x64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.12.0
+          cache: npm
+          package-manager-cache: false
+
+      - name: Install Linux runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 libatspi2.0-0
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and coverage gates
+        run: npm run test:coverage
+
+      - name: Build and verify packaged app
+        run: npm run package:dir
+
+      - name: Configure Chromium sandbox helper
+        run: |
+          sudo chown root:root release/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 release/linux-unpacked/chrome-sandbox
+          test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
+
+      - name: Packaged crash/recovery smoke test
+        run: xvfb-run -a sh -c 'ulimit -c 0; npx playwright test'
+
+      - name: Build distributable formats
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          npm run package
+          cd release
+          sha256sum Teleprompt-*.AppImage teleprompt_*.deb teleprompt-*.tar.gz > SHA256SUMS.txt
+
+      - name: Upload verified unpacked application
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: teleprompt-linux-x64-${{ github.sha }}
+          path: release/linux-unpacked
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload tagged release candidates
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v7
+        with:
+          name: teleprompt-${{ github.ref_name }}-linux-x64
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.tar.gz
+            release/SHA256SUMS.txt
+          retention-days: 30
+          if-no-files-found: error

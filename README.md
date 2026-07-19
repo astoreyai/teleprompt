@@ -1,116 +1,99 @@
 # Teleprompt
 
-Transparent screen-overlay teleprompter for Linux/Win/Mac. Multi-file playlist, voice-paced auto-scroll, screen-capture hiding, cue points, markdown + docx ingest. Built on Electron + React + TypeScript.
+Teleprompt is a crash-resilient transparent teleprompter for Linux x64. It provides a separate operator window and always-on-top reading overlay, multi-document workspaces, local recovery drafts, cue points, paced scrolling, optional voice pacing, and X11 presentation controls.
 
-## Quick start
+Version 1.0 is intentionally released and verified for Linux x64. Windows and macOS are not current release targets.
+
+## Install a release
+
+Download an AppImage, Debian package, or tar archive together with `SHA256SUMS.txt`, then verify the bundle before running it:
 
 ```bash
-npm install
+sha256sum --check SHA256SUMS.txt
+sudo apt install ./teleprompt_1.0.0_amd64.deb
+```
+
+See [INSTALL.md](INSTALL.md) for portable formats, upgrades, local data, platform constraints, and troubleshooting.
+
+## Start developing
+
+Use Node.js 22.12 or newer.
+
+```bash
+npm ci
 npm run dev
 ```
 
-Two windows open:
-- **Overlay** — frameless, transparent, always-on-top. Hover near the top edge to reveal a drag handle. Double-click the text to jump straight into the editor.
-- **Controls** — playlist, sliders, toggles, hotkey reference, settings.
+The controls window owns file and settings actions. The overlay has a smaller, role-specific API limited to playback, geometry, and window interaction.
 
-## Features
+## What is supported
 
-### Reading
-- Multi-file playlist (`.txt`, `.md`, `.rtf`, `.docx`) via file picker or drag-and-drop; recent paths persist
-- Variable opacity (5–100%) + background dim
-- Auto-scroll, 5–400 px/s
-- Typography: font size, family, color, drop-shadow
-- Markdown rendering (sanitized via DOMPurify) — headings, lists, blockquotes, inline code
-- Eye-line marker + focus mode (masks lines outside the eye-line band)
-- Mirror modes: horizontal (beam-splitter rigs) and vertical
-- Banner / lower-third mode — single-line horizontal ticker at top or bottom
-- RTL — `dir="auto"` on text containers; per-paragraph direction detection
-- Chronometer in overlay corner: elapsed · time-to-end · target WPM
-- 3-2-1 countdown before play (configurable seconds, only when starting from the top)
-- Cue points — `[[CUE: name]]` markers become a clickable list and bind to `Ctrl+Alt+1..9`; optional in-overlay cue HUD shows the upcoming list with the current cue highlighted
+- Imports `.txt`, `.md`, `.markdown`, `.fountain`, `.rtf`, `.docx`, `.odt`, `.pdf`, `.html`, `.htm`, `.srt`, and `.vtt` files.
+- Overwrites only lossless text sources: plain text, Markdown, and Fountain.
+- Saves extracted PDF, Word, OpenDocument, HTML, RTF, and subtitle content to a new text file; the binary or structured source is never overwritten.
+- Detects external edits before overwriting a text source and offers a save-copy path.
+- Keeps unsaved edits in private recovery drafts and restores them paused after a clean exit, renderer crash, or process restart.
+- Uses stable document IDs and revisions so delayed editor writes cannot modify a neighboring playlist item.
+- Runs untrusted document parsing in a bounded, killable Electron utility process.
+- Keeps scrolling in the overlay renderer and checkpoints only small scalar progress messages to the main process.
+- Supports sanitized Markdown, mirrored text, eye-line/focus modes, countdowns, cue points, manual speed, duration/WPM targets, global hotkeys, and optional voice pacing. Very large scripts stay in plain-text mode and do not enable memory-heavy voice tokenization.
 
-### Editing
-- Live edit pane — debounced (200 ms) writes to in-memory state; save back to disk (or save-as for new scripts)
-- Edit-while-prompting — double-click overlay text to open the editor and focus the controls window
+## Save and recovery behavior
 
-### Overlay behavior
-- Click-through mode — mouse passes through to apps below
-- Hide from screen capture — `setContentProtection` (macOS / Windows; Linux unsupported and indicated in UI)
-- Per-window geometry persistence; bounds clamped to current displays on launch
+An acknowledged editor update is written to a private draft before the command returns. Metadata is then atomically committed with a backup. On startup, Teleprompt tries the primary state, its backup, and legacy state in order; invalid or future-version state is quarantined rather than shallow-merged.
 
-### Input
-- Global hotkeys (see table below); rebindable per-command from the Hotkeys panel
-- Clicker mode — registers `PageUp` / `PageDown` globally to step scroll by a configurable amount; opt-in toggle
-- Voice pacing — Web Speech API matches your spoken words against the script and auto-advances. Requires consent on first enable (styled modal); status pill reads "voice (cloud)" while active because Chromium routes audio to Google for transcription
+Clean source documents are re-read through the same bounded importer. Dirty documents restore from the matching draft. Playback, voice activity, clicker arming, and presentation arming always restart off.
 
-### Settings
-- Reset to defaults (with confirm)
-- Export / import config (JSON)
-- About: app, electron, node versions; on-disk store path
-
-## Hotkeys
-
-Default bindings:
-
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl+Alt+Space` | Play / Pause |
-| `Ctrl+Alt+↑` / `↓` | Speed +/- |
-| `Ctrl+Alt+]` / `[` | Opacity +/- |
-| `Ctrl+Alt+→` / `←` | Next / Prev file |
-| `Ctrl+Alt+H` | Hide / Show overlay (recreates if closed) |
-| `Ctrl+Alt+T` | Toggle click-through |
-| `Ctrl+Alt+R` | Restart from top |
-| `Ctrl+Alt+1..9` | Jump to cue 1–9 (fixed, not rebindable) |
-| `PageUp` / `PageDown` | Step back/forward (clicker mode, fixed) |
-
-Each binding (except cue jumps and clicker keys) is **rebindable** in the Hotkeys panel — click an accelerator to capture a new key combo, or hit `↺` next to it to restore default. Failed registrations (held by another app or the compositor) are listed in red.
-
-## Build
+## Verification loop
 
 ```bash
-npm run build       # transpile main/preload/renderer
-npm run package     # build + electron-builder distributables
-npm run typecheck
+npm run test:watch       # red → green → refactor loop
+npm run check            # types, unit tests, production build
+npm run check:release    # audit, coverage, packaged recovery E2E
+npm run test:soak        # repeat packaged crash/restart scenarios
+npm run package          # AppImage, deb, and tar.gz
 ```
+
+The packaged tests launch the fused production binary, cross the utility-process importer boundary, protect an externally changed source, recover drafts after restart, exercise playback checkpoints, verify preload isolation, and force a renderer crash to prove bounded recreation.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+  C[Controls renderer] -->|semantic ControlsApi| P[role-specific preload]
+  O[Overlay renderer] -->|semantic OverlayApi| P
+  P -->|authorized IPC| M[main application layer]
+  M --> W[workspace + controller]
+  M --> R[private metadata + drafts]
+  M --> S[atomic save service]
+  M --> U[bounded parser utility process]
+  W -->|content-free snapshot| C
+  W -->|active content by revision| C
+  W -->|active content by revision| O
+  O -->|250 ms scalar checkpoint| M
 ```
-src/
-├── main/         Electron main process — windows, IPC, hotkeys, electron-store state
-├── preload/      contextBridge → window.api
-├── shared/       AppState, cue parser (used by main + both renderers)
-└── renderer/
-    ├── overlay.html  + src/overlay/    Transparent scrolling window
-    ├── controls.html + src/controls/   Control panel
-    └── src/shared/voice.ts             Web Speech API + sliding-window alignment
-```
 
-- State lives in the main process (`electron-store` with debounced 250 ms disk writes); broadcast to both renderers on every patch.
-- Persistence stores file **paths** only — file contents are re-read on launch and never touch disk via electron-store.
-- Auto-scroll is driven by a single RAF loop in the overlay with a `liveRef` snapshot of state and 50 ms-throttled IPC dispatch back to main; echo-suppression prevents the writer from reprocessing its own update.
+The full design, invariants, and failure policy are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The completed crash review is in [docs/ARCHITECTURE_REVIEW.md](docs/ARCHITECTURE_REVIEW.md), and the implementation task graph is in [docs/ATG_PLAN.md](docs/ATG_PLAN.md). Release highlights are tracked in [CHANGELOG.md](CHANGELOG.md), with operational sign-off in [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md).
 
-## Security posture
+## Security and privacy
 
-- `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true` on both BrowserWindows
-- `setWindowOpenHandler({ action: 'deny' })` and `will-navigate` blocking external URLs
-- Strict Content-Security-Policy (per-directive, no `'unsafe-inline'` on scripts)
-- DOMPurify sanitizes markdown HTML before injection
-- IPC handlers validate every input against an explicit `PATCHABLE_KEYS` allowlist with type checks and range clamping
-- `files:loadPath` rejects paths outside the recent set, session-allowed set, or whitelisted extensions
-- `files:save` to non-session-allowed paths is forced through a save dialog
-- Permission request handler allows only `media` (mic for voice pacing); all others denied
-- Path-only persistence keeps file contents off disk via `electron-store`
+- Both windows use sandboxing, context isolation, disabled Node integration, navigation denial, a restrictive CSP, and exact role/top-frame IPC authorization.
+- Production uses a private `teleprompt://app` renderer origin and hardened Electron fuses; CI verifies the executable and ASAR layout after packaging.
+- File reads are regular-file-only, symlink-refusing, bounded, and nonblocking. Archive imports are preflighted for expansion, entry, path, and compression-ratio limits.
+- Voice pacing is off until explicit consent. Chromium speech recognition may use a network service depending on the platform; the UI exposes active status and consent revocation.
+- Crash reports remain local, secret-like environment variables are removed before Crashpad starts, artifacts are retained for at most seven days/ten files, and the 512 KiB diagnostic log is private, rotated, and credential-redacted.
 
-## Platform notes
+See [SECURITY.md](SECURITY.md) for the threat model and residual risks.
 
-- **Wayland**: `alwaysOnTop`, global hotkeys, and screen-capture hiding behave inconsistently across compositors. The Controls window shows a banner on Wayland; XWayland is the most predictable fallback.
-- **Linux generally**: `setContentProtection` is a no-op on Linux (Electron limitation). The toggle is disabled with an explanation.
-- **Voice pacing**: `webkitSpeechRecognition` in Electron 41 routes audio to Google for transcription. First-enable shows a consent dialog. The status pill reads `voice (cloud)` while active.
+## Linux notes
 
-## Known limitations
+- Hardware acceleration is disabled by default because the reviewed installation had historical GPU/renderer native crashes. Set `TELEPROMPT_HWACCEL=1` only after validating the target machine.
+- Screen-capture protection is unavailable in Electron on Linux and is disabled in the UI.
+- X11 presentation driving requires `xdotool`; Wayland compositors vary in always-on-top and global-hotkey behavior.
+- Voice pacing depends on Web Speech Recognition availability and has no local speech engine fallback.
 
-- RTF parsing is hand-rolled; complex RTF (embedded objects, tables) may strip imperfectly. Use `.docx` for higher-fidelity source.
-- Voice pacing is cloud STT (Chromium routes audio to Google). No local fallback yet.
-- `Ctrl+Alt+1..9` (cue jumps) and `PageUp` / `PageDown` (clicker) are not rebindable in v1.
+Development rules and the TDD loop are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

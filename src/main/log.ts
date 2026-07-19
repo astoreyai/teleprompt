@@ -1,7 +1,7 @@
 import { app } from 'electron'
-import { appendFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
+import { appendDiagnosticLine } from './diagnostic-log.js'
 
 function logFilePath(): string {
   for (const base of ['logs', 'userData'] as const) {
@@ -19,11 +19,8 @@ function logFilePath(): string {
  * not be able to take the app down.
  */
 export function logCrash(message: string): void {
-  const line = `${new Date().toISOString()} ${message}\n`
   try {
-    const file = logFilePath()
-    mkdirSync(dirname(file), { recursive: true })
-    appendFileSync(file, line)
+    appendDiagnosticLine(logFilePath(), message)
   } catch {
     /* last resort */
     console.error('[crash]', message)
