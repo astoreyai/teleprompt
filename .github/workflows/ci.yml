@@ -50,6 +50,12 @@ jobs:
       - name: Build and verify packaged app
         run: npm run package:dir
 
+      - name: Configure Chromium sandbox helper
+        run: |
+          sudo chown root:root release/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 release/linux-unpacked/chrome-sandbox
+          test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
+
       - name: Packaged crash/recovery smoke test
         run: xvfb-run -a sh -c 'ulimit -c 0; npx playwright test'
 
