@@ -10,6 +10,7 @@ export function projectOverlaySnapshot(snapshot: AppSnapshot): OverlaySnapshot {
     scrollSpeed: snapshot.scrollSpeed,
     playing: snapshot.playing,
     playbackSessionId: snapshot.playbackSessionId,
+    seekGeneration: snapshot.seekGeneration,
     bgDim: snapshot.bgDim,
     fontSize: snapshot.fontSize,
     fontFamily: snapshot.fontFamily,

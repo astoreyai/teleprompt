@@ -11,48 +11,46 @@ marked.setOptions({ gfm: true, breaks: true, async: false })
 
 type ResizeEdge = 'se' | 'sw' | 'ne' | 'nw' | 'n' | 's' | 'e' | 'w'
 
-function useWindowDrag() {
-  return useMemo(
-    () => (event: React.MouseEvent) => {
-      if (event.button !== 0) return
-      event.preventDefault()
-      void window.overlayApi.dragStart(event.screenX, event.screenY)
-      const onMove = (next: MouseEvent) => {
-        void window.overlayApi.dragUpdate(next.screenX, next.screenY)
-      }
-      const onUp = () => {
-        window.removeEventListener('mousemove', onMove)
-        window.removeEventListener('mouseup', onUp)
-        void window.overlayApi.dragEnd()
-      }
-      window.addEventListener('mousemove', onMove)
-      window.addEventListener('mouseup', onUp)
-    },
-    [],
-  )
+function useWindowGesture(edge?: ResizeEdge) {
+  const cleanup = useRef<(() => void) | null>(null)
+  useEffect(() => () => cleanup.current?.(), [])
+  return (event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return
+    cleanup.current?.()
+    event.preventDefault()
+    event.stopPropagation()
+    const element = event.currentTarget
+    const pointerId = event.pointerId
+    element.setPointerCapture(pointerId)
+    const safe = (operation: Promise<void>) => { void operation.catch(() => finish()) }
+    const onMove = (next: PointerEvent) => {
+      if (next.pointerId !== pointerId) return
+      safe(edge ? window.overlayApi.resizeUpdate(next.screenX, next.screenY) : window.overlayApi.dragUpdate(next.screenX, next.screenY))
+    }
+    const finish = () => {
+      if (cleanup.current !== finish) return
+      cleanup.current = null
+      element.removeEventListener('pointermove', onMove)
+      element.removeEventListener('pointerup', onEnd)
+      element.removeEventListener('pointercancel', onEnd)
+      element.removeEventListener('lostpointercapture', finish)
+      window.removeEventListener('blur', finish)
+      if (element.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId)
+      void (edge ? window.overlayApi.resizeEnd() : window.overlayApi.dragEnd()).catch(() => undefined)
+    }
+    const onEnd = (next: PointerEvent) => { if (next.pointerId === pointerId) finish() }
+    cleanup.current = finish
+    element.addEventListener('pointermove', onMove)
+    element.addEventListener('pointerup', onEnd)
+    element.addEventListener('pointercancel', onEnd)
+    element.addEventListener('lostpointercapture', finish)
+    window.addEventListener('blur', finish)
+    safe(edge ? window.overlayApi.resizeStart(event.screenX, event.screenY, edge) : window.overlayApi.dragStart(event.screenX, event.screenY))
+  }
 }
 
-function useWindowResize(edge: ResizeEdge) {
-  return useMemo(
-    () => (event: React.MouseEvent) => {
-      if (event.button !== 0) return
-      event.preventDefault()
-      event.stopPropagation()
-      void window.overlayApi.resizeStart(event.screenX, event.screenY, edge)
-      const onMove = (next: MouseEvent) => {
-        void window.overlayApi.resizeUpdate(next.screenX, next.screenY)
-      }
-      const onUp = () => {
-        window.removeEventListener('mousemove', onMove)
-        window.removeEventListener('mouseup', onUp)
-        void window.overlayApi.resizeEnd()
-      }
-      window.addEventListener('mousemove', onMove)
-      window.addEventListener('mouseup', onUp)
-    },
-    [edge],
-  )
-}
+function useWindowDrag() { return useWindowGesture() }
+function useWindowResize(edge: ResizeEdge) { return useWindowGesture(edge) }
 
 function renderMarkdown(source: string): string {
   try {
@@ -224,22 +222,25 @@ function usePlaybackCheckpoint(
   localPosition: React.MutableRefObject<number>,
 ) {
   const gate = useRef(new PlaybackCheckpointGate(250, 0.05))
-
-  useEffect(() => {
+  const current = useRef({ snapshot, content })
+  current.current = { snapshot, content }
+  useLayoutEffect(() => {
     gate.current.reset()
-  }, [snapshot.playbackSessionId, content?.id, content?.revision])
+  }, [snapshot.playbackSessionId, snapshot.seekGeneration, content?.id, content?.revision])
 
   return (position: number, terminal: boolean, now: number) => {
-    if (!snapshot.playbackSessionId || !content) return
+    const { snapshot: latest, content: document } = current.current
+    if (!latest.playbackSessionId || !document) return
     localPosition.current = position
     if (!gate.current.shouldSend({ now, position, terminal })) return
     void window.overlayApi.checkpoint({
-      documentId: content.id,
-      revision: content.revision,
-      sessionId: snapshot.playbackSessionId,
+      documentId: document.id,
+      revision: document.revision,
+      sessionId: latest.playbackSessionId,
+      seekGeneration: latest.seekGeneration,
       position,
       terminal,
-    })
+    }).catch(() => undefined)
   }
 }
 
@@ -254,10 +255,10 @@ function FullView({
   const liveSnapshot = useRef(snapshot)
   liveSnapshot.current = snapshot
   const localPosition = useRef(snapshot.scrollPosition)
-  const lastCheckpointPosition = useRef(snapshot.scrollPosition)
   const frame = useRef(0)
   const lastTick = useRef(0)
   const [geometry, setGeometry] = useState({ textH: 0, viewportH: 0 })
+  const geometryRef = useRef(geometry)
   const [countdown, setCountdown] = useState<number | null>(null)
   const [renderedPosition, setRenderedPosition] = useState(snapshot.scrollPosition)
   const visualUpdateGate = useRef(new PlaybackCheckpointGate(250))
@@ -280,7 +281,7 @@ function FullView({
     const viewport = viewportRef.current
     const text = textRef.current
     if (!viewport || !text) return
-    const range = Math.max(1, text.scrollHeight - viewport.clientHeight)
+    const range = Math.max(1, geometryRef.current.textH - geometryRef.current.viewportH)
     const offset = -localPosition.current * range
     const current = liveSnapshot.current
     text.style.transform = `translateY(${offset}px) scale(${current.mirrorH ? -1 : 1}, ${current.mirrorV ? -1 : 1})`
@@ -289,42 +290,34 @@ function FullView({
   useLayoutEffect(() => {
     const viewport = viewportRef.current
     const text = textRef.current
-    if (!viewport || !text) return
-    const next = { textH: text.scrollHeight, viewportH: viewport.clientHeight }
-    setGeometry(next)
-    void window.overlayApi.reportGeometry(next)
-    applyTransform()
-  }, [html, display, snapshot.fontSize, snapshot.fontFamily, snapshot.mirrorH, snapshot.mirrorV])
-
-  useEffect(() => {
-    const viewport = viewportRef.current
-    const text = textRef.current
-    if (!viewport || !text) return
-    const observer = new ResizeObserver(() => {
+    if (!viewport || !text || !content) {
+      geometryRef.current = { textH: 0, viewportH: 0 }
+      setGeometry(geometryRef.current)
+      return
+    }
+    const measure = () => {
       const next = { textH: text.scrollHeight, viewportH: viewport.clientHeight }
-      setGeometry((previous) =>
-        previous.textH === next.textH && previous.viewportH === next.viewportH ? previous : next,
-      )
-      void window.overlayApi.reportGeometry(next)
+      geometryRef.current = next
+      setGeometry((previous) => previous.textH === next.textH && previous.viewportH === next.viewportH ? previous : next)
+      void window.overlayApi.reportGeometry({ ...next, documentId: content.id, revision: content.revision, bannerMode: false }).catch(() => undefined)
       applyTransform()
-    })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
     observer.observe(viewport)
     observer.observe(text)
     return () => observer.disconnect()
-  }, [])
+  }, [content?.id, content?.revision, html, display, snapshot.fontSize, snapshot.fontFamily, snapshot.mirrorH, snapshot.mirrorV])
 
   useEffect(() => {
     visualUpdateGate.current.reset()
   }, [snapshot.playbackSessionId, content?.id, content?.revision])
 
-  useEffect(() => {
-    if (Math.abs(snapshot.scrollPosition - lastCheckpointPosition.current) > 0.0015) {
-      localPosition.current = snapshot.scrollPosition
-      lastCheckpointPosition.current = snapshot.scrollPosition
-      setRenderedPosition(snapshot.scrollPosition)
-      applyTransform()
-    }
-  }, [snapshot.scrollPosition, snapshot.playbackSessionId])
+  useLayoutEffect(() => {
+    localPosition.current = snapshot.scrollPosition
+    setRenderedPosition(snapshot.scrollPosition)
+    applyTransform()
+  }, [snapshot.seekGeneration, snapshot.playbackSessionId, content?.id, content?.revision, snapshot.playing, snapshot.playing ? null : snapshot.scrollPosition])
 
   useEffect(() => {
     if (!snapshot.playing || !snapshot.playbackSessionId || !content) {
@@ -346,13 +339,12 @@ function FullView({
           const viewport = viewportRef.current
           const text = textRef.current
           if (viewport && text) {
-            const range = Math.max(1, text.scrollHeight - viewport.clientHeight)
+            const range = Math.max(1, geometryRef.current.textH - geometryRef.current.viewportH)
             const next = Math.min(
               1,
               localPosition.current + (liveSnapshot.current.scrollSpeed * (now - previous)) / 1000 / range,
             )
             localPosition.current = next
-            lastCheckpointPosition.current = next
             if (visualUpdateGate.current.shouldSend({ now, position: next, terminal: next >= 1 })) {
               setRenderedPosition(next)
             }
@@ -407,13 +399,13 @@ function FullView({
     <div className="overlay">
       <div className="overlay__bg" style={{ background: `rgba(0, 0, 0, ${snapshot.bgDim})` }} />
       <div className="overlay__drag">
-        <div className="overlay__drag-grip" onMouseDown={drag} />
+        <div className="overlay__drag-grip" onPointerDown={drag} />
         <MiniTransport snapshot={snapshot} />
       </div>
-      <div className="overlay__resize overlay__resize--se" onMouseDown={resizeSE} />
-      <div className="overlay__resize overlay__resize--sw" onMouseDown={resizeSW} />
-      <div className="overlay__resize overlay__resize--ne" onMouseDown={resizeNE} />
-      <div className="overlay__resize overlay__resize--nw" onMouseDown={resizeNW} />
+      <div className="overlay__resize overlay__resize--se" onPointerDown={resizeSE} />
+      <div className="overlay__resize overlay__resize--sw" onPointerDown={resizeSW} />
+      <div className="overlay__resize overlay__resize--ne" onPointerDown={resizeNE} />
+      <div className="overlay__resize overlay__resize--nw" onPointerDown={resizeNW} />
       <div
         className="overlay__viewport"
         ref={viewportRef}
@@ -470,7 +462,7 @@ function BannerView({ snapshot, metadata: _metadata, content }: ViewProps) {
   const liveSnapshot = useRef(snapshot)
   liveSnapshot.current = snapshot
   const localPosition = useRef(snapshot.scrollPosition)
-  const lastCheckpointPosition = useRef(snapshot.scrollPosition)
+  const geometryRef = useRef({ range: 1, viewportWidth: 0 })
   const frame = useRef(0)
   const lastTick = useRef(0)
   const checkpoint = usePlaybackCheckpoint(snapshot, content, localPosition)
@@ -483,21 +475,33 @@ function BannerView({ snapshot, metadata: _metadata, content }: ViewProps) {
     const strip = stripRef.current
     const text = textRef.current
     if (!strip || !text) return
-    const range = Math.max(1, text.scrollWidth + strip.clientWidth)
-    const offset = strip.clientWidth - localPosition.current * range
+    const range = geometryRef.current.range
+    const offset = geometryRef.current.viewportWidth - localPosition.current * range
     const current = liveSnapshot.current
     text.style.transform = `translateX(${offset}px) scale(${current.mirrorH ? -1 : 1}, ${current.mirrorV ? -1 : 1})`
   }
 
-  useLayoutEffect(applyTransform, [flat, snapshot.fontSize, snapshot.fontFamily, snapshot.mirrorH, snapshot.mirrorV])
-
-  useEffect(() => {
-    if (Math.abs(snapshot.scrollPosition - lastCheckpointPosition.current) > 0.0015) {
-      localPosition.current = snapshot.scrollPosition
-      lastCheckpointPosition.current = snapshot.scrollPosition
+  useLayoutEffect(() => {
+    const strip = stripRef.current
+    const text = textRef.current
+    if (!strip || !text || !content) return
+    const measure = () => {
+      const range = Math.max(1, text.scrollWidth + strip.clientWidth)
+      geometryRef.current = { range, viewportWidth: strip.clientWidth }
+      void window.overlayApi.reportGeometry({ textH: range, viewportH: 0, documentId: content.id, revision: content.revision, bannerMode: true }).catch(() => undefined)
       applyTransform()
     }
-  }, [snapshot.scrollPosition, snapshot.playbackSessionId])
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(strip)
+    observer.observe(text)
+    return () => observer.disconnect()
+  }, [content?.id, content?.revision, flat, snapshot.fontSize, snapshot.fontFamily, snapshot.mirrorH, snapshot.mirrorV])
+
+  useLayoutEffect(() => {
+    localPosition.current = snapshot.scrollPosition
+    applyTransform()
+  }, [snapshot.seekGeneration, snapshot.playbackSessionId, content?.id, content?.revision, snapshot.playing, snapshot.playing ? null : snapshot.scrollPosition])
 
   useEffect(() => {
     if (!snapshot.playing || !snapshot.playbackSessionId || !content) {
@@ -512,13 +516,12 @@ function BannerView({ snapshot, metadata: _metadata, content }: ViewProps) {
         const strip = stripRef.current
         const text = textRef.current
         if (strip && text) {
-          const range = Math.max(1, text.scrollWidth + strip.clientWidth)
+          const range = geometryRef.current.range
           const next = Math.min(
             1,
             localPosition.current + (liveSnapshot.current.scrollSpeed * (now - previous)) / 1000 / range,
           )
           localPosition.current = next
-          lastCheckpointPosition.current = next
           applyTransform()
           checkpoint(next, next >= 1, now)
           if (next >= 1) return
@@ -541,13 +544,13 @@ function BannerView({ snapshot, metadata: _metadata, content }: ViewProps) {
   return (
     <div className="overlay overlay--banner">
       <div className="overlay__drag">
-        <div className="overlay__drag-grip" onMouseDown={drag} />
+        <div className="overlay__drag-grip" onPointerDown={drag} />
         <MiniTransport snapshot={snapshot} />
       </div>
-      <div className="overlay__resize overlay__resize--se" onMouseDown={resizeSE} />
-      <div className="overlay__resize overlay__resize--sw" onMouseDown={resizeSW} />
-      <div className="overlay__resize overlay__resize--ne" onMouseDown={resizeNE} />
-      <div className="overlay__resize overlay__resize--nw" onMouseDown={resizeNW} />
+      <div className="overlay__resize overlay__resize--se" onPointerDown={resizeSE} />
+      <div className="overlay__resize overlay__resize--sw" onPointerDown={resizeSW} />
+      <div className="overlay__resize overlay__resize--ne" onPointerDown={resizeNE} />
+      <div className="overlay__resize overlay__resize--nw" onPointerDown={resizeNW} />
       <div
         className={`banner ${snapshot.textShadow ? 'banner--shadow' : ''}`}
         style={{

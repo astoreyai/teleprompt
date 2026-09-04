@@ -47,12 +47,13 @@ Clean source documents are re-read through the same bounded importer. Dirty docu
 ## Verification loop
 
 ```bash
-npm run test:watch       # red → green → refactor loop
-npm run check            # types, unit tests, production build
-npm run check:release    # audit, coverage, packaged recovery E2E
-npm run test:soak        # repeat packaged crash/restart scenarios
-npm run package          # AppImage, deb, and tar.gz
+npm run typecheck
+npm run test:real
+npm run build
+npm run test:e2e
 ```
+
+`test:real` and the packaged format checks require `TELEPROMPT_REAL_DOCX` and `TELEPROMPT_REAL_PDF` to name genuine local documents. Repository Markdown files supply the other document bytes. The reviewed subset refuses missing binary inputs instead of silently skipping them. Legacy suites still containing fabricated fixtures are outside this subset; `npm test`, coverage, and the full release gate remain unqualified until that conversion is complete. See [implementation status](docs/audits/2026-09-04/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
 
 The packaged tests launch the fused production binary, cross the utility-process importer boundary, protect an externally changed source, recover drafts after restart, exercise playback checkpoints, verify preload isolation, and force a renderer crash to prove bounded recreation.
 

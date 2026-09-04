@@ -24,6 +24,7 @@ type Recognizer = {
   onresult: ((event: RecognitionEvent) => void) | null
   onerror: ((event: RecognitionErrorEvent) => void) | null
   onend: (() => void) | null
+  onstart: (() => void) | null
 }
 
 declare global {
@@ -104,6 +105,7 @@ export class VoicePacer {
   private rec: Recognizer | null = null
   private spoken: string[] = []
   private running = false
+  private generation = 0
   private restartAttempts = 0
   private restartTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -112,6 +114,7 @@ export class VoicePacer {
     private getCurrentTokenIdx: () => number,
     private onAdvance: (tokenIdx: number) => void,
     private onError?: (msg: string) => void,
+    private onStatus?: (status: 'starting' | 'active') => void,
   ) {}
 
   start(lang = 'en-US'): boolean {
@@ -122,12 +125,41 @@ export class VoicePacer {
     }
     if (this.running) return true
 
-    const rec = new Ctor()
+    const generation = ++this.generation
+    let rec: Recognizer
+    try { rec = new Ctor() }
+    catch (error) {
+      this.onError?.(error instanceof Error ? error.message : 'Speech recognition could not initialize')
+      return false
+    }
+    const current = () => this.running && this.rec === rec && this.generation === generation
+    const fail = (message: string) => {
+      if (!current()) return
+      this.stop()
+      this.onError?.(message)
+    }
+    const restart = () => {
+      if (!current() || this.restartTimer) return
+      if (this.restartAttempts >= MAX_RESTART_ATTEMPTS) {
+        fail('Voice recognition kept failing; enable voice pacing to retry.')
+        return
+      }
+      this.restartAttempts += 1
+      this.onStatus?.('starting')
+      this.restartTimer = setTimeout(() => {
+        this.restartTimer = null
+        if (!current()) return
+        try { rec.start() }
+        catch { restart() }
+      }, 250 * this.restartAttempts)
+    }
     rec.continuous = true
     rec.interimResults = true
     rec.lang = lang
 
+    rec.onstart = () => { if (current()) this.onStatus?.('active') }
     rec.onresult = (event) => {
+      if (!current()) return
       this.restartAttempts = 0
       let transcript = ''
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -145,58 +177,40 @@ export class VoicePacer {
       if (next !== null && next > cur) this.onAdvance(next)
     }
 
-    rec.onerror = (e) => {
-      const code = String(e?.error ?? 'unknown')
-      if (FATAL_ERRORS.has(code)) {
-        this.running = false
-        this.onError?.(`voice disabled: ${code}`)
-      } else {
-        this.onError?.(`recognition error: ${code}`)
-      }
+    rec.onerror = (event) => {
+      if (!current()) return
+      const code = String(event.error ?? 'unknown')
+      if (FATAL_ERRORS.has(code)) fail(`Voice disabled: ${code}`)
+      else this.onStatus?.('starting')
     }
-
-    rec.onend = () => {
-      if (!this.running) return
-      if (this.restartAttempts >= MAX_RESTART_ATTEMPTS) {
-        this.running = false
-        this.onError?.('voice recognition kept failing — giving up')
-        return
-      }
-      this.restartAttempts += 1
-      const delay = 250 * this.restartAttempts
-      this.restartTimer = setTimeout(() => {
-        this.restartTimer = null
-        if (!this.running || !this.rec) return
-        try {
-          this.rec.start()
-        } catch {
-          /* swallow — onend will fire again or remain stopped */
-        }
-      }, delay)
-    }
+    rec.onend = restart
 
     this.rec = rec
     this.running = true
     this.restartAttempts = 0
+    this.onStatus?.('starting')
     try {
       rec.start()
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'start failed'
-      this.onError?.(msg)
-      this.running = false
-      this.rec = null
+      fail(msg)
       return false
     }
     return true
   }
 
   stop() {
+    this.generation += 1
     this.running = false
     if (this.restartTimer) {
       clearTimeout(this.restartTimer)
       this.restartTimer = null
     }
     if (this.rec) {
+      this.rec.onresult = null
+      this.rec.onerror = null
+      this.rec.onend = null
+      this.rec.onstart = null
       try {
         this.rec.abort()
       } catch {

@@ -3,6 +3,8 @@ import type { DocumentContent, DocumentMeta } from '../../../shared/contracts'
 
 export type EditorHandle = {
   flush(): Promise<boolean>
+  suspend(): Promise<void>
+  resume(content?: DocumentContent): void
 }
 
 export const EditorPane = forwardRef<
@@ -20,72 +22,134 @@ export const EditorPane = forwardRef<
   ref,
 ) {
   const [local, setLocal] = useState(documentContent.content)
+  const [conflict, setConflict] = useState(false)
+  const [suspended, setSuspended] = useState(false)
   const localRef = useRef(documentContent.content)
-  const revisionRef = useRef(documentContent.revision)
-  const lastSubmitted = useRef(documentContent.content)
+  const base = useRef(documentContent)
+  const incoming = useRef(documentContent)
+  incoming.current = documentContent
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const queue = useRef<Promise<boolean>>(Promise.resolve(true))
+  const inFlight = useRef<Promise<boolean> | null>(null)
+  const pending = useRef<string | null>(null)
+  const blocked = useRef(false)
+  const paused = useRef(false)
+  const generation = useRef(0)
+
+  const clearTimer = () => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current)
+    debounceTimer.current = null
+  }
+
+  const reset = (content: DocumentContent) => {
+    base.current = content
+    localRef.current = content.content
+    pending.current = null
+    blocked.current = false
+    setConflict(false)
+    setLocal(content.content)
+  }
 
   useEffect(() => {
-    revisionRef.current = Math.max(revisionRef.current, documentContent.revision)
-    if (localRef.current === lastSubmitted.current) {
-      localRef.current = documentContent.content
-      lastSubmitted.current = documentContent.content
-      setLocal(documentContent.content)
+    if (paused.current || inFlight.current || documentContent.revision <= base.current.revision) return
+    if (localRef.current === base.current.content) reset(documentContent)
+    else {
+      blocked.current = true
+      pending.current = null
+      setConflict(true)
     }
   }, [documentContent.content, documentContent.revision])
 
   const submit = (value: string): Promise<boolean> => {
-    queue.current = queue.current.then(async () => {
-      if (value === lastSubmitted.current) return true
-      const result = await window.controlsApi.updateDocument(
-        documentContent.id,
-        revisionRef.current,
-        value,
-      )
-      if (result.ok) {
-        revisionRef.current = result.revision
-        lastSubmitted.current = value
-        return true
+    if (paused.current || blocked.current) return Promise.resolve(false)
+    pending.current = value
+    if (inFlight.current) return inFlight.current
+    const currentGeneration = generation.current
+    const drain = async (): Promise<boolean> => {
+      while (pending.current !== null && !blocked.current && !paused.current) {
+        const next = pending.current
+        pending.current = null
+        if (next === base.current.content) continue
+        try {
+          const result = await window.controlsApi.updateDocument(documentContent.id, base.current.revision, next)
+          if (currentGeneration !== generation.current) {
+            // A reload may cancel pending work, but an admitted durable write still advances our base.
+            if (result.ok) base.current = { id: documentContent.id, revision: result.revision, content: next }
+            return false
+          }
+          if (result.ok) {
+            base.current = { id: documentContent.id, revision: result.revision, content: next }
+            if (incoming.current.revision > result.revision) {
+              blocked.current = true
+              pending.current = null
+              setConflict(true)
+              return false
+            }
+          } else {
+            pending.current = null
+            if (result.reason === 'conflict') {
+              blocked.current = true
+              setConflict(true)
+              onIssue('The script changed elsewhere. Choose which version to keep; your text is preserved below.')
+            } else if (result.reason === 'too-large') {
+              onIssue('This script exceeds the 10 MB editing limit.')
+            } else {
+              onIssue('error' in result ? String(result.error) : 'The active script is no longer available.')
+            }
+            return false
+          }
+        } catch (error) {
+          pending.current = null
+          onIssue(error instanceof Error ? error.message : 'Unable to save the recovery draft')
+          return false
+        }
       }
-      if (result.reason === 'conflict') {
-        revisionRef.current = result.currentRevision
-        onIssue('The script changed elsewhere. Your text is preserved; save again to retry against the latest revision.')
-      } else if (result.reason === 'too-large') {
-        onIssue('This script exceeds the 10 MB editing limit.')
-      } else {
-        onIssue('The active script is no longer available.')
-      }
-      return false
-    }).catch((error: unknown) => {
-      onIssue(error instanceof Error ? error.message : 'Unable to save the recovery draft')
-      return false
-    })
-    return queue.current
+      return !blocked.current && !paused.current
+    }
+    inFlight.current = drain().finally(() => { inFlight.current = null })
+    return inFlight.current
   }
 
   const flush = async (): Promise<boolean> => {
-    if (debounceTimer.current) {
-      clearTimeout(debounceTimer.current)
-      debounceTimer.current = null
-    }
+    clearTimer()
     return submit(localRef.current)
   }
 
-  useImperativeHandle(ref, () => ({ flush }))
-
-  useEffect(
-    () => () => {
-      if (debounceTimer.current) clearTimeout(debounceTimer.current)
-      if (localRef.current !== lastSubmitted.current) void submit(localRef.current)
+  useImperativeHandle(ref, () => ({
+    flush,
+    suspend: async () => {
+      clearTimer()
+      paused.current = true
+      setSuspended(true)
+      generation.current += 1
+      pending.current = null
+      await inFlight.current
     },
-    [],
-  )
+    resume: (content) => {
+      if (content) reset(content)
+      else if (incoming.current.revision > base.current.revision) {
+        if (localRef.current === base.current.content) reset(incoming.current)
+        else { blocked.current = true; setConflict(true) }
+      }
+      paused.current = false
+      setSuspended(false)
+    },
+  }))
+
+  useEffect(() => {
+    paused.current = false
+    return () => {
+      clearTimer()
+      paused.current = true
+      generation.current += 1
+      pending.current = null
+    }
+  }, [])
 
   const updateLocal = (value: string) => {
     localRef.current = value
     setLocal(value)
-    if (debounceTimer.current) clearTimeout(debounceTimer.current)
+    clearTimer()
+    if (inFlight.current && !blocked.current) pending.current = value
     debounceTimer.current = setTimeout(() => {
       debounceTimer.current = null
       void submit(localRef.current)
@@ -120,10 +184,24 @@ export const EditorPane = forwardRef<
           Close editor
         </button>
       </div>
+      {conflict && (
+        <div className="banner-warn" role="alert">
+          <p>The script changed elsewhere. Your text is preserved in the editor.</p>
+          <details><summary>Review the current saved version</summary><pre>{documentContent.content}</pre></details>
+          <button type="button" className="btn" onClick={() => reset(incoming.current)}>Use current saved version</button>
+          <button type="button" className="btn" onClick={() => {
+            base.current = incoming.current
+            blocked.current = false
+            setConflict(false)
+            void flush()
+          }}>Replace saved version with my text</button>
+        </div>
+      )}
       <textarea
         className="editor__area"
         aria-label={`Edit ${metadata.name}`}
         value={local}
+        disabled={suspended}
         onChange={(event) => updateLocal(event.target.value)}
         onBlur={() => void flush()}
         spellCheck

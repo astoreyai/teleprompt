@@ -1,4 +1,4 @@
-import { app, BrowserWindow, crashReporter, session } from 'electron'
+import { app, BrowserWindow, crashReporter, dialog, session } from 'electron'
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,7 +8,7 @@ import { DocumentImportService } from './documents/import-service.js'
 import { DocumentSaveService } from './documents/save-service.js'
 import { classifyDocumentPath } from './files/file-policy.js'
 import { HotkeyManager } from './hotkeys.js'
-import { loadPathOnStartup, registerIpc, unregisterIpc, type IpcDependencies } from './ipc.js'
+import { cancelIpcImports, drainIpcCommands, loadPathOnStartup, registerIpc, requestEditorFlush, setIpcClosing, unregisterIpc, type IpcDependencies } from './ipc.js'
 import { purgeOldCrashArtifacts } from './lifecycle/crash-retention.js'
 import { logCrash } from './log.js'
 import { PacingService } from './pacing.js'
@@ -20,6 +20,7 @@ import {
   applyOverlayEffects,
   broadcastSnapshot,
   configureWindowRuntime,
+  clampToDisplay,
   createControls,
   createOverlay,
   focusControls,
@@ -27,6 +28,8 @@ import {
   getRendererUrl,
   stopCursorPoll,
   stopTopReassertPoll,
+  stopWindowRecovery,
+  sendControlsEvent,
 } from './windows.js'
 
 registerRendererScheme()
@@ -46,6 +49,7 @@ let quitAfterFlush = false
 let quitFlushStarted = false
 let fatal = false
 const pendingPaths: string[] = []
+let controlsClosePending = false
 
 function handleFatal(kind: string, error: unknown): void {
   if (fatal) return
@@ -54,6 +58,8 @@ function handleFatal(kind: string, error: unknown): void {
   logCrash(`${kind}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`)
   dependencies?.controller.pause()
   dependencies?.hotkeys.unregister()
+  dependencies?.importer.dispose()
+  stopWindowRecovery()
   unregisterIpc()
   const flush = dependencies?.store.flush() ?? Promise.resolve()
   void Promise.race([flush, delay(1000)])
@@ -73,6 +79,7 @@ if (!hasLock) {
   pendingPaths.push(...pickFileArgs(process.argv))
 
   app.on('second-instance', (_event, argv) => {
+    if (quitting) return
     focusControlsIfReady()
     const paths = pickFileArgs(argv)
     if (dependencies) void loadQueuedPaths(paths)
@@ -81,6 +88,7 @@ if (!hasLock) {
 
   app.on('open-file', (event, path) => {
     event.preventDefault()
+    if (quitting) return
     if (!classifyDocumentPath(path)) return
     if (dependencies) void loadQueuedPaths([path])
     else pendingPaths.push(path)
@@ -105,11 +113,13 @@ async function bootstrap(): Promise<void> {
   })
   const importer = new DocumentImportService(supervisor)
   const store = new AppStore({ metadata, drafts })
-  await store.initialize(importer)
+  let initialized = false
+  const ready = store.initialize(importer).then(() => { initialized = true })
   const controller = new AppController(store)
   const hotkeys = new HotkeyManager(store, controller)
   const pacing = new PacingService(store)
   dependencies = {
+    ready,
     store,
     controller,
     importer,
@@ -121,23 +131,32 @@ async function bootstrap(): Promise<void> {
   configureWindowRuntime({
     getSnapshot: () => store.getSnapshot(),
     updateBounds: (key, bounds) => {
-      store.patchState({ [key]: bounds })
+      if (initialized) store.patchState({ [key]: bounds })
     },
-    onRendererGone: (_role, _reason) => {
-      if (quitting) return
+    onRendererGone: (role, _reason) => {
+      if (quitting || !initialized) return
+      if (role === 'controls' && dependencies) cancelIpcImports(dependencies)
       controller.pause()
       broadcastSnapshot(store.getSnapshot())
     },
     onOverlayVisibilityChanged: (visible) => {
-      if (!quitting) store.patchState({ overlayVisible: visible })
+      if (!quitting && initialized) store.patchState({ overlayVisible: visible })
     },
     isQuitting: () => quitting,
+    canCloseControls: () => quitAfterFlush || fatal,
+    onControlsClose: (window) => { void closeControlsGracefully(window) },
   })
 
   installPermissionPolicy(store)
+  store.subscribeIssues(() => sendControlsEvent('storage:issues', store.getIssues()))
   registerIpc(dependencies)
+  // Show the existing loading UI while real recovery/import work runs. IPC
+  // waits for hydration, so early commands cannot be erased by initialization.
+  const controls = createControls()
+  await ready
+  if (quitting) { importer.dispose(); return }
+  if (!controls.isDestroyed()) controls.setBounds(clampToDisplay(store.getSnapshot().controlsBounds, 'controls'))
   createOverlay()
-  createControls()
   hotkeys.register()
   applyOverlayEffects()
   await loadQueuedPaths(pendingPaths.splice(0))
@@ -197,11 +216,16 @@ function installPermissionPolicy(store: AppStore): void {
 }
 
 async function loadQueuedPaths(paths: string[]): Promise<void> {
+  if (quitting) return
   if (!dependencies) {
     pendingPaths.push(...paths)
     return
   }
-  for (const path of [...new Set(paths)]) await loadPathOnStartup(dependencies, path)
+  await dependencies.ready
+  for (const path of [...new Set(paths)]) {
+    if (quitting) break
+    await loadPathOnStartup(dependencies, path)
+  }
 }
 
 function focusControlsIfReady(): void {
@@ -216,20 +240,93 @@ app.on('before-quit', (event) => {
   quitting = true
   dependencies?.controller.pause()
   dependencies?.hotkeys.unregister()
+  void quitGracefully()
+})
+
+async function flushForClose(): Promise<void> {
+  setIpcClosing('flushing')
+  if (!(await requestEditorFlush())) throw new Error('The editor could not confirm that its latest text was saved.')
+  setIpcClosing('draining')
+  if (dependencies) cancelIpcImports(dependencies)
+  await withDeadline((async () => {
+    await dependencies?.ready
+    await drainIpcCommands()
+    await dependencies?.store.flush()
+  })(), 10_000)
+}
+
+async function quitGracefully(): Promise<void> {
+  try {
+    await flushForClose()
+  } catch (error) {
+    logCrash(`shutdown flush failed: ${formatError(error)}`)
+    const choice = await dialog.showMessageBox({
+      type: 'warning',
+      title: 'Teleprompt could not finish saving',
+      message: formatError(error),
+      detail: 'Keep Teleprompt open to preserve the editor text, or retry. Quitting now can lose changes that have not reached recovery storage.',
+      buttons: ['Keep open', 'Try again', 'Quit without pending changes'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    })
+    if (choice.response === 1) return quitGracefully()
+    if (choice.response !== 2) {
+      quitting = false
+      quitFlushStarted = false
+      setIpcClosing('open')
+      dependencies?.hotkeys.register()
+      return
+    }
+  }
+  dependencies?.importer.dispose()
+  stopWindowRecovery()
   unregisterIpc()
   stopCursorPoll()
   stopTopReassertPoll()
-  const flush = dependencies?.store.flush() ?? Promise.resolve()
-  void Promise.race([flush, delay(1500)])
-    .catch((flushError) => logCrash(`shutdown flush failed: ${formatError(flushError)}`))
-    .finally(() => {
-      quitAfterFlush = true
-      app.quit()
+  quitAfterFlush = true
+  app.quit()
+}
+
+async function closeControlsGracefully(window: BrowserWindow): Promise<void> {
+  if (controlsClosePending || quitFlushStarted) return
+  controlsClosePending = true
+  try {
+    await flushForClose()
+    if (!window.isDestroyed()) window.destroy()
+  } catch (error) {
+    logCrash(`controls close flush failed: ${formatError(error)}`)
+    await dialog.showMessageBox({
+      type: 'warning',
+      title: 'The editor is still open',
+      message: formatError(error),
+      detail: 'Resolve the save problem, then close the window again. Your current editor text has been kept open.',
+      buttons: ['Keep open'],
     })
-})
+  } finally {
+    controlsClosePending = false
+    if (!quitting) setIpcClosing('open')
+  }
+}
+
+async function withDeadline<T>(operation: Promise<T>, milliseconds: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Saving is taking longer than expected.')), milliseconds)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 app.on('will-quit', () => {
   dependencies?.hotkeys.unregister()
+  dependencies?.importer.dispose()
+  stopWindowRecovery()
   unregisterIpc()
   stopCursorPoll()
   stopTopReassertPoll()

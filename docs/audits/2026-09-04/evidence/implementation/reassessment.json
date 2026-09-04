@@ -1,0 +1,41 @@
+{
+  "full_release_qualified": false,
+  "confirmed_runtime_failures_repaired": [
+    {
+      "finding": "destroyed BrowserWindow access on Controls close",
+      "evidence": "packaged crash log out/main/index.js:1824; same predicate present at base HEAD",
+      "correction": "guard BrowserWindow lifetime before accessing webContents"
+    },
+    {
+      "finding": "renderer-initiated close lost pending editor text",
+      "evidence": "native-close packaged test restored README after editing SECURITY",
+      "correction": "beforeunload and will-prevent-unload route through actual editor flush"
+    },
+    {
+      "finding": "PDF import failed only inside Electron utility process",
+      "evidence": "two packaged failures: DOMMatrix is not defined; real Node parser test passed",
+      "correction": "real canvas classes and pdf-parse bundled worker initialized in the utility process"
+    },
+    {
+      "finding": "generated AppImage silently disables sandbox",
+      "evidence": "builder 26.15.3 generated AppRun lines 43-57; new artifact verifier rejects extracted launcher",
+      "correction": "project-owned AppRun copied into package; exact launcher verification"
+    }
+  ],
+  "test_harness_corrections": [
+    "Markdown display assertion strips actual Markdown heading syntax",
+    "Checkpoint test uses actual overlay contract activeDocumentMeta/playbackSessionId",
+    "Fourth-crash test waits for actual crash event rather than an indefinitely pending debugger response",
+    "Native beforeunload is owned by Electron; Playwright automatic dismissal must not race it",
+    "Initial CLI import is asynchronous: wait for actual content; original immediate assertion flaked 1/2 then corrected isolated test passed 3/3"
+  ],
+  "pending_qualification": [
+    "nine legacy test files not converted",
+    "representative malformed and large real document corpus",
+    "actual microphone and compositor",
+    "full coverage under pinned CI Node",
+    "RSS watchdog and measured performance envelope",
+    "active-first background hydration",
+    "post-rename external-writer race and cross-file crash atomicity"
+  ]
+}

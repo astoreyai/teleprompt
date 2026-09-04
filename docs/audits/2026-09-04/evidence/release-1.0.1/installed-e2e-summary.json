@@ -1,0 +1,15 @@
+{
+  "stats": {
+    "startTime": "2026-09-04T22:10:56.267Z",
+    "duration": 60615.237,
+    "expected": 16,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "errors": [],
+  "repeats": 2,
+  "retries": 0,
+  "executable": "/opt/Teleprompt/teleprompt",
+  "version": "1.0.1"
+}

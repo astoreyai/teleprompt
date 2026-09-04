@@ -7,6 +7,7 @@ const OVERLAY = ['overlay'] as const
 const BOTH = ['controls', 'overlay'] as const
 
 export const IPC_POLICY = {
+  'editor:flushed': { roles: CONTROLS },
   'app:bootstrap': { roles: BOTH },
   'documents:open': { roles: CONTROLS },
   'documents:openRecent': { roles: CONTROLS },

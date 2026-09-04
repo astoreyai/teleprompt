@@ -1,0 +1,43 @@
+{
+  "commit": "984b52b5acf2c5042a0dbe70b359d6f38dc6c981",
+  "node": "v26.7.0",
+  "npm": "11.19.0",
+  "files": [
+    {
+      "path": "/mnt/projects/teleprompt/README.md",
+      "bytes": 5906,
+      "mtime_utc": "2026-07-19T19:06:02.773546+00:00",
+      "sha256": "e761b74492b9dc84fabb19812ab210177a80052011edb9ffae22fbf630fba7cc"
+    },
+    {
+      "path": "/mnt/projects/teleprompt/SECURITY.md",
+      "bytes": 3710,
+      "mtime_utc": "2026-07-19T19:06:02.773546+00:00",
+      "sha256": "91b2e494b8ca3640494ec255421136ff8bcde5281e039ac23eea0e31d4b01423"
+    },
+    {
+      "path": "/mnt/projects/teleprompt/package-lock.json",
+      "bytes": 280783,
+      "mtime_utc": "2026-07-19T19:06:02.773546+00:00",
+      "sha256": "ead137995f5558f78e3c8dfd432936a71a3eccef46c69d7e34333f9d20fa1c2e"
+    }
+  ],
+  "app_asar_sha256": "1139dd9fd172c5eb8e03d71eda4c6b8dda4fd91a6e42125b001fa1959b7fe675",
+  "original_dirty_paths": [
+    ".gitignore",
+    ".claude/",
+    ".ignore",
+    ".mcp.json"
+  ],
+  "unit_and_e2e_baseline": "not run: existing fabricated fixtures conflict with user policy",
+  "typecheck_exit": 0,
+  "build_exit": 0,
+  "unpacked_package_exit": 0,
+  "artifact_verifier_exit": 0,
+  "npm_audit_exit": 1,
+  "focused_checks": {
+    "passed": 2,
+    "failed": 6
+  },
+  "memory_benchmark": "not measured"
+}

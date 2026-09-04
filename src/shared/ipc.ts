@@ -30,6 +30,7 @@ export type ControlsBootstrapPayload = {
   snapshot: AppSnapshot
   activeDocument: DocumentContent | null
   startupIssues: string[]
+  unresolvedDocuments: Omit<DocumentMeta, 'saveMode'>[]
 }
 
 export type OverlayBootstrapPayload = {
@@ -75,11 +76,24 @@ export type SaveResult =
   | { ok: true; document: DocumentMeta }
   | {
       ok: false
+      reason: 'storage-failed'
+      sourceSaved: true
+      currentRevision: number
+      targetPath: string
+      error: string
+    }
+  | {
+      ok: false
       reason: 'not-found' | 'cancelled' | 'conflict' | 'invalid-target' | 'write-failed'
       error?: string
     }
 
 export type ControlsApi = {
+  onFlushRequest(callback: (requestId: string) => void): () => void
+  acknowledgeFlush(requestId: string, ok: boolean): Promise<void>
+  onStorageIssues(callback: (issues: string[]) => void): () => void
+  onClosingChanged(callback: (closing: boolean) => void): () => void
+  onUnresolvedDocuments(callback: (documents: Omit<DocumentMeta, 'saveMode'>[]) => void): () => void
   bootstrap(): Promise<ControlsBootstrapPayload>
   openFiles(): Promise<{ loaded: DocumentMeta[]; errors: Array<{ name: string; error: string }> }>
   openRecent(path: string): Promise<{ ok: true; document: DocumentMeta } | { ok: false; error: string }>
@@ -124,10 +138,11 @@ export type OverlayApi = {
     documentId: DocumentId
     revision: number
     sessionId: string
+    seekGeneration: number
     position: number
     terminal: boolean
   }): Promise<{ ok: boolean; reason?: string }>
-  reportGeometry(geometry: { textH: number; viewportH: number }): Promise<void>
+  reportGeometry(geometry: OverlayGeometry): Promise<void>
   dragStart(screenX: number, screenY: number): Promise<void>
   dragUpdate(screenX: number, screenY: number): Promise<void>
   dragEnd(): Promise<void>
@@ -140,3 +155,11 @@ export type OverlayApi = {
 }
 
 export type SupportedCreateFormat = Extract<DocumentFormat, 'text' | 'markdown' | 'fountain'>
+
+export type OverlayGeometry = {
+  documentId: DocumentId
+  revision: number
+  bannerMode: boolean
+  textH: number
+  viewportH: number
+}

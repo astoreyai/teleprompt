@@ -1,0 +1,55 @@
+{
+  "profile": "/tmp/teleprompt-audit-2026-09-04/profile-wSMsPe",
+  "source": "/mnt/projects/teleprompt/README.md",
+  "checks": [
+    {
+      "name": "real README import",
+      "pass": true,
+      "documents": 1
+    },
+    {
+      "name": "empty update accepted",
+      "pass": false,
+      "error": "Error: page.evaluate: Error: Error invoking remote method 'documents:update': Error: invalid content"
+    },
+    {
+      "name": "overlay source paths absent",
+      "pass": true
+    },
+    {
+      "name": "observed pre-seek checkpoint rejected",
+      "pass": false,
+      "observedPosition": 0.0015714068441064636,
+      "result": {
+        "ok": true
+      },
+      "positionAfterReplay": 0.0015714068441064636
+    },
+    {
+      "name": "recovery stops after three failures within 60s",
+      "pass": false,
+      "recoveries": [
+        {
+          "attempt": 1,
+          "elapsedMs": 1456,
+          "documentIntact": true
+        },
+        {
+          "attempt": 2,
+          "elapsedMs": 1369,
+          "documentIntact": true
+        },
+        {
+          "attempt": 3,
+          "elapsedMs": 1848,
+          "documentIntact": true
+        },
+        {
+          "attempt": 4,
+          "elapsedMs": 1997,
+          "documentIntact": true
+        }
+      ]
+    }
+  ]
+}

@@ -20,7 +20,7 @@ The controls renderer has explicit document/settings authority. The transparent 
 - Separate typed preloads for controls and overlay; no generic IPC bridge.
 - Exact channel, role, top-frame, and renderer-origin authorization in the main process.
 - Navigation, popups, and webviews denied; restrictive renderer CSP; Markdown sanitized with DOMPurify.
-- Private custom production protocol and ASAR-only loading with embedded integrity validation.
+- Private custom production protocol and ASAR-only loading. The integrity fuse is set, but Electron does not support embedded ASAR integrity enforcement on Linux; installation permissions and independently verified distribution hashes remain necessary. See [Electron ASAR integrity support](https://www.electronjs.org/docs/latest/tutorial/asar-integrity).
 - Node execution, `NODE_OPTIONS`, Node inspector CLI arguments, and privileged `file://` behavior disabled through Electron fuses.
 - Regular-file-only, symlink-refusing, nonblocking, bounded reads.
 - Concurrency, input, output, timeout, ZIP entry, expansion, and compression-ratio limits for document parsing in a killable utility process.

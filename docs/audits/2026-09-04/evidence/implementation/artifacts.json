@@ -1,0 +1,17 @@
+[
+  {
+    "path": "/tmp/teleprompt-implementation/distributions/Teleprompt-1.0.0-x86_64.AppImage",
+    "bytes": 161240354,
+    "sha256": "15f4066bd1c4da80cc2a263dbf613dacca0d2447fe8dbbd4825522462cf57030"
+  },
+  {
+    "path": "/tmp/teleprompt-implementation/distributions/teleprompt-1.0.0.tar.gz",
+    "bytes": 152890716,
+    "sha256": "61a4b8155151af5b4876f6aaed23740cc6e4ef836db44cf08786a84f89884d23"
+  },
+  {
+    "path": "/tmp/teleprompt-implementation/distributions/teleprompt_1.0.0_amd64.deb",
+    "bytes": 124833804,
+    "sha256": "971a663c9f5ec73a6e415dcdfb8273c96c76583f0d81c8850b3bb233c933c71b"
+  }
+]

@@ -54,4 +54,5 @@ const HARD_FAILURES = new Set<RendererExitReason>([
   'oom',
   'launch-failed',
   'integrity-failure',
+  'unresponsive',
 ])

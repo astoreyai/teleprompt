@@ -8,6 +8,7 @@ import type {
   DocumentUpdateResult,
 } from '../../shared/contracts.js'
 import { createDefaultSnapshot } from '../../shared/defaults.js'
+import { MAX_DOCUMENT_BYTES } from '../../shared/text.js'
 import { getSaveMode } from '../files/file-policy.js'
 
 const DEFAULT_MAX_DOCUMENTS = 100
@@ -23,6 +24,7 @@ export class DocumentWorkspace {
   private snapshot: AppSnapshot
   private readonly records = new Map<DocumentId, DocumentRecord>()
   private totalChars = 0
+  private totalBytes = 0
 
   constructor(
     private readonly options: {
@@ -30,9 +32,21 @@ export class DocumentWorkspace {
       maxDocuments?: number
       maxDocumentChars?: number
       maxTotalChars?: number
+      maxDocumentBytes?: number
+      maxTotalBytes?: number
     } = {},
   ) {
     this.snapshot = createDefaultSnapshot()
+  }
+
+  // Clone records but share immutable string bodies until a candidate replaces one.
+  fork(): DocumentWorkspace {
+    const candidate = new DocumentWorkspace(this.options)
+    candidate.snapshot = this.getSnapshot()
+    candidate.totalChars = this.totalChars
+    candidate.totalBytes = this.totalBytes
+    for (const [id, record] of this.records) candidate.records.set(id, { ...record })
+    return candidate
   }
 
   addDocument(input: {
@@ -50,8 +64,8 @@ export class DocumentWorkspace {
     const maxDocumentChars = this.options.maxDocumentChars ?? DEFAULT_MAX_DOCUMENT_CHARS
     const maxTotalChars = this.options.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS
     if (this.records.size >= maxDocuments) throw new WorkspaceLimitError('document limit reached')
-    if (input.content.length > maxDocumentChars) throw new WorkspaceLimitError('document too large')
-    if (this.totalChars + input.content.length > maxTotalChars)
+    if (input.content.length > maxDocumentChars || Buffer.byteLength(input.content, 'utf8') > (this.options.maxDocumentBytes ?? MAX_DOCUMENT_BYTES)) throw new WorkspaceLimitError('document too large')
+    if (this.totalChars + input.content.length > maxTotalChars || this.totalBytes + Buffer.byteLength(input.content, 'utf8') > (this.options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_CHARS))
       throw new WorkspaceLimitError('workspace content limit reached')
 
     const id = input.id ?? (this.options.idFactory ?? randomUUID)()
@@ -70,6 +84,7 @@ export class DocumentWorkspace {
     }
     this.records.set(id, record)
     this.totalChars += record.content.length
+    this.totalBytes += Buffer.byteLength(record.content, 'utf8')
     this.snapshot = {
       ...this.snapshot,
       documents: [...this.snapshot.documents, metaFrom(record)],
@@ -84,6 +99,7 @@ export class DocumentWorkspace {
     const oldIndex = this.snapshot.documents.findIndex((document) => document.id === id)
     this.records.delete(id)
     this.totalChars -= record.content.length
+    this.totalBytes -= Buffer.byteLength(record.content, 'utf8')
     const documents = this.snapshot.documents.filter((document) => document.id !== id)
     let activeDocumentId = this.snapshot.activeDocumentId
     let playing = this.snapshot.playing
@@ -140,6 +156,7 @@ export class DocumentWorkspace {
     if (!validation.ok) return validation
     const record = this.records.get(input.id)
     if (!record) throw new Error('document update validation invariant failed')
+    this.totalBytes += Buffer.byteLength(input.content, 'utf8') - Buffer.byteLength(record.content, 'utf8')
     record.content = input.content
     record.revision += 1
     record.dirty = true
@@ -161,7 +178,10 @@ export class DocumentWorkspace {
     const maxDocumentChars = this.options.maxDocumentChars ?? DEFAULT_MAX_DOCUMENT_CHARS
     const maxTotalChars = this.options.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS
     const nextTotal = this.totalChars - record.content.length + input.content.length
-    if (input.content.length > maxDocumentChars || nextTotal > maxTotalChars) {
+    const nextBytes = this.totalBytes - Buffer.byteLength(record.content, 'utf8') + Buffer.byteLength(input.content, 'utf8')
+    if (input.content.length > maxDocumentChars || nextTotal > maxTotalChars ||
+      Buffer.byteLength(input.content, 'utf8') > (this.options.maxDocumentBytes ?? MAX_DOCUMENT_BYTES) ||
+      nextBytes > (this.options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_CHARS)) {
       return { ok: false, reason: 'too-large' }
     }
     return { ok: true, revision: record.revision + 1, previousLength: record.content.length }
@@ -187,6 +207,13 @@ export class DocumentWorkspace {
     return true
   }
 
+  retainDraft(id: DocumentId): void {
+    const record = this.records.get(id)
+    if (!record) return
+    record.dirty = true
+    this.refreshMeta(record)
+  }
+
   replaceDocument(
     id: DocumentId,
     input: {
@@ -203,10 +230,14 @@ export class DocumentWorkspace {
     const nextTotal = this.totalChars - record.content.length + input.content.length
     const maxDocumentChars = this.options.maxDocumentChars ?? DEFAULT_MAX_DOCUMENT_CHARS
     const maxTotalChars = this.options.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS
-    if (input.content.length > maxDocumentChars || nextTotal > maxTotalChars) {
+    const nextBytes = this.totalBytes - Buffer.byteLength(record.content, 'utf8') + Buffer.byteLength(input.content, 'utf8')
+    if (input.content.length > maxDocumentChars || nextTotal > maxTotalChars ||
+      Buffer.byteLength(input.content, 'utf8') > (this.options.maxDocumentBytes ?? MAX_DOCUMENT_BYTES) ||
+      nextBytes > (this.options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_CHARS)) {
       throw new WorkspaceLimitError('reloaded document is too large')
     }
     this.totalChars = nextTotal
+    this.totalBytes = nextBytes
     Object.assign(record, {
       ...input,
       saveMode: getSaveMode(input),

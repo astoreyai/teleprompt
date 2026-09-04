@@ -1,5 +1,6 @@
-import { mkdir, rename, unlink } from 'node:fs/promises'
+import { mkdir, readdir, rename, unlink } from 'node:fs/promises'
 import { extname, join, parse } from 'node:path'
+import { MAX_DOCUMENT_BYTES } from '../../shared/text.js'
 import { saveTextAtomically } from '../files/atomic-write.js'
 import { readBoundedRegularFile } from '../files/safe-reader.js'
 import {
@@ -97,6 +98,25 @@ export class MetadataRepository {
     if (!saved.ok) throw new Error(`state save failed: ${resultMessage(saved)}`)
   }
 
+  // Backup means recovery of latest available draft bytes, not historical rollback.
+  // Refuse cleanup if either copy cannot be fully validated.
+  async referencedDraftIds(): Promise<Set<string>> {
+    const ids = new Set<string>()
+    for (const path of [this.path, this.backupPath]) {
+      const current = await readCurrentText(path, this.maxBytes)
+      if (!current) continue
+      const raw: unknown = JSON.parse(current.text)
+      const parsed = parsePersistedState(raw)
+      if (parsed.quarantined || parsed.migrated || parsed.issues.length > 0) {
+        throw new Error('draft cleanup deferred: metadata references could not be validated')
+      }
+      for (const reference of parsed.value.documentRefs) {
+        if (reference.dirty) ids.add(reference.id)
+      }
+    }
+    return ids
+  }
+
   private async initializeDirectory(): Promise<void> {
     await mkdir(parse(this.path).dir, { recursive: true, mode: 0o700 })
   }
@@ -112,7 +132,7 @@ export class MetadataRepository {
 export class DraftRepository {
   constructor(
     private readonly directory: string,
-    private readonly maxBytes = 10 * 1024 * 1024,
+    private readonly maxBytes = MAX_DOCUMENT_BYTES,
   ) {}
 
   async initialize(): Promise<void> {
@@ -141,6 +161,15 @@ export class DraftRepository {
     await unlink(this.pathFor(id)).catch((error) => {
       if (!isNodeError(error) || error.code !== 'ENOENT') throw error
     })
+  }
+
+  async cleanup(referencedIds: ReadonlySet<string>): Promise<void> {
+    await this.initialize()
+    for (const entry of await readdir(this.directory, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.txt')) continue
+      const id = entry.name.slice(0, -4)
+      if (DOCUMENT_ID_PATTERN.test(id) && !referencedIds.has(id)) await this.delete(id)
+    }
   }
 
   private pathFor(id: string): string {

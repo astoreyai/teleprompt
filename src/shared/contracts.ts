@@ -49,6 +49,7 @@ export type AppSnapshot = {
   scrollSpeed: number
   playing: boolean
   playbackSessionId: string | null
+  seekGeneration: number
   overlayVisible: boolean
   voiceStatus: 'off' | 'starting' | 'active' | 'error'
   voiceError: string | null
@@ -96,6 +97,7 @@ export type OverlaySnapshot = Pick<
   | 'scrollSpeed'
   | 'playing'
   | 'playbackSessionId'
+  | 'seekGeneration'
   | 'bgDim'
   | 'fontSize'
   | 'fontFamily'
@@ -122,3 +124,4 @@ export type DocumentUpdateResult =
   | { ok: false; reason: 'not-found' }
   | { ok: false; reason: 'conflict'; currentRevision: number }
   | { ok: false; reason: 'too-large' }
+  | { ok: false; reason: 'storage-failed'; error: string }

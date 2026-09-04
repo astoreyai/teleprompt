@@ -1,0 +1,44 @@
+[
+  {
+    "name": "backup after successful save restores real document",
+    "pass": false,
+    "dir": "/tmp/teleprompt-audit-2026-09-04/backup-pycIGk",
+    "saved": {
+      "ok": true,
+      "targetPath": "/tmp/teleprompt-audit-2026-09-04/backup-pycIGk/README.md",
+      "format": "markdown",
+      "sourceMtimeMs": 1788554512622.9568,
+      "sourceHash": "91b2e494b8ca3640494ec255421136ff8bcde5281e039ac23eea0e31d4b01423"
+    },
+    "backupDirty": true,
+    "draftExists": false,
+    "restoredDocuments": 0,
+    "issues": [
+      "recovered state from backup",
+      "README.md: recovery draft is missing"
+    ]
+  },
+  {
+    "name": "temporarily unavailable source remains recoverable",
+    "pass": false,
+    "dir": "/tmp/teleprompt-audit-2026-09-04/unavailable-HqqLPA",
+    "issues": [
+      "README.md: ENOENT: no such file or directory, open '/tmp/teleprompt-audit-2026-09-04/unavailable-HqqLPA/README.md'"
+    ],
+    "restoredDocuments": 0,
+    "sourceStillExists": true
+  },
+  {
+    "name": "metadata failure preserves client revision contract",
+    "pass": false,
+    "dir": "/tmp/teleprompt-audit-2026-09-04/metadata-failure-4vnHZK",
+    "rejection": "Error: state backup failed: EACCES: permission denied, open '/tmp/teleprompt-audit-2026-09-04/metadata-failure-4vnHZK/.teleprompt-state.v2.json.bak.teleprompt-1752555-fd25e38c-eade-47a3-b74f-15649d1111b0.tmp'",
+    "initialRevision": 0,
+    "currentRevision": 1,
+    "retry": {
+      "ok": false,
+      "reason": "conflict",
+      "currentRevision": 1
+    }
+  }
+]

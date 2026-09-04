@@ -1,6 +1,8 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { open, lstat, rename, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { MAX_DOCUMENT_BYTES } from '../../shared/text.js'
+import { readBoundedRegularFile } from './safe-reader.js'
 
 export type AtomicWriteResult =
   | { ok: true; mtimeMs: number }
@@ -12,6 +14,7 @@ export async function saveTextAtomically(input: {
   targetPath: string
   content: string
   expectedMtimeMs?: number | null
+  expectedSourceHash?: string
 }): Promise<AtomicWriteResult> {
   if (!input.targetPath || typeof input.content !== 'string') {
     return { ok: false, reason: 'invalid-target', error: 'invalid save request' }
@@ -49,6 +52,25 @@ export async function saveTextAtomically(input: {
     } finally {
       await file.close()
     }
+    // Revalidate after writing/fsyncing the temporary file. This narrows the
+    // external-writer window; portable rename is not a compare-and-swap.
+    if (input.expectedSourceHash !== undefined) {
+      try {
+        const source = await readBoundedRegularFile(input.targetPath, MAX_DOCUMENT_BYTES)
+        if (createHash('sha256').update(source.bytes).digest('hex') !== input.expectedSourceHash) {
+          return { ok: false, reason: 'conflict', currentMtimeMs: source.mtimeMs }
+        }
+      } catch {
+        return { ok: false, reason: 'conflict', currentMtimeMs: null }
+      }
+    }
+    const latest = await inspectTarget(input.targetPath)
+    if (latest.kind === 'invalid') return { ok: false, reason: 'invalid-target', error: latest.error }
+    if (latest.kind !== current.kind || (latest.kind === 'file' && current.kind === 'file' &&
+      (latest.dev !== current.dev || latest.ino !== current.ino || latest.ctimeMs !== current.ctimeMs ||
+       latest.mtimeMs !== current.mtimeMs || latest.size !== current.size))) {
+      return { ok: false, reason: 'conflict', currentMtimeMs: latest.kind === 'file' ? latest.mtimeMs : null }
+    }
     await rename(temporaryPath, input.targetPath)
     temporaryCreated = false
     await syncDirectory(parent)
@@ -67,7 +89,7 @@ export async function saveTextAtomically(input: {
 
 type InspectedTarget =
   | { kind: 'missing' }
-  | { kind: 'file'; mtimeMs: number; mode: number }
+  | { kind: 'file'; mtimeMs: number; ctimeMs: number; mode: number; dev: number; ino: number; size: number }
   | { kind: 'invalid'; error: string }
 
 async function inspectTarget(path: string): Promise<InspectedTarget> {
@@ -75,7 +97,7 @@ async function inspectTarget(path: string): Promise<InspectedTarget> {
     const info = await lstat(path)
     if (info.isSymbolicLink()) return { kind: 'invalid', error: 'refusing to overwrite a symbolic link' }
     if (!info.isFile()) return { kind: 'invalid', error: 'target is not a regular file' }
-    return { kind: 'file', mtimeMs: info.mtimeMs, mode: info.mode }
+    return { kind: 'file', mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs, mode: info.mode, dev: info.dev, ino: info.ino, size: info.size }
   } catch (error) {
     if (isNodeError(error) && error.code === 'ENOENT') return { kind: 'missing' }
     return {

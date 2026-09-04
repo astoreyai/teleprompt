@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, screen, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, screen, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AppSnapshot, DocumentContent } from '../shared/contracts.js'
@@ -10,7 +10,9 @@ import { projectOverlaySnapshot } from './platform/overlay-projection.js'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const PRELOAD = join(__dirname, '../preload/index.js')
-const RENDERER_DEV = process.env.ELECTRON_RENDERER_URL
+function rendererDevUrl(): string | undefined {
+  return app.isPackaged ? undefined : process.env.ELECTRON_RENDERER_URL
+}
 
 export type Windows = { overlay?: BrowserWindow; controls?: BrowserWindow }
 
@@ -18,8 +20,10 @@ type WindowRuntime = {
   getSnapshot(): AppSnapshot
   updateBounds(key: 'overlayBounds' | 'controlsBounds', bounds: Bounds): void
   onRendererGone(role: RendererRole, reason: string): void
+  onControlsClose(win: BrowserWindow): void
   onOverlayVisibilityChanged(visible: boolean): void
   isQuitting(): boolean
+  canCloseControls(): boolean
 }
 
 let runtime: WindowRuntime | null = null
@@ -27,6 +31,20 @@ const windows: Windows = {}
 const recoveryDisposers = new WeakMap<BrowserWindow, () => void>()
 const recreatingWindows = new WeakSet<BrowserWindow>()
 const renderProcessGoneWindows = new WeakSet<BrowserWindow>()
+const readyWindows = new WeakSet<BrowserWindow>()
+// The role survives BrowserWindow replacement, so crashes cannot reset their own budget.
+const recovery = {
+  controls: { policy: new RendererRecoveryPolicy(), timer: null as ReturnType<typeof setTimeout> | null, stopped: false },
+  overlay: { policy: new RendererRecoveryPolicy(), timer: null as ReturnType<typeof setTimeout> | null, stopped: false },
+}
+
+export function stopWindowRecovery(): void {
+  for (const state of Object.values(recovery)) {
+    if (state.timer) clearTimeout(state.timer)
+    state.timer = null
+  }
+}
+
 
 export function configureWindowRuntime(next: WindowRuntime): void {
   runtime = next
@@ -48,8 +66,9 @@ export function getRendererRole(contents: WebContents): RendererRole | null {
 }
 
 export function getRendererUrl(role: RendererRole): string | null {
-  return RENDERER_DEV
-    ? new URL(`${role}.html`, ensureTrailingSlash(RENDERER_DEV)).toString()
+  const developmentUrl = rendererDevUrl()
+  return developmentUrl
+    ? new URL(`${role}.html`, ensureTrailingSlash(developmentUrl)).toString()
     : `teleprompt://app/${role}.html`
 }
 
@@ -111,6 +130,16 @@ export function createControls(): BrowserWindow {
   recoveryDisposers.set(win, attachCrashRecovery(win, 'controls'))
   win.on('moved', () => persistBounds('controlsBounds', win))
   win.on('resized', () => persistBounds('controlsBounds', win))
+  win.webContents.on('will-prevent-unload', (event) => {
+    if (getRuntime().canCloseControls()) event.preventDefault()
+    else getRuntime().onControlsClose(win)
+  })
+  win.on('close', (event) => {
+    if (!getRuntime().canCloseControls()) {
+      event.preventDefault()
+      getRuntime().onControlsClose(win)
+    }
+  })
   win.on('closed', () => {
     recoveryDisposers.get(win)?.()
     recoveryDisposers.delete(win)
@@ -140,82 +169,102 @@ function hardenWebContents(win: BrowserWindow): void {
 }
 
 function attachCrashRecovery(win: BrowserWindow, role: RendererRole): () => void {
-  const policy = new RendererRecoveryPolicy()
-  const timers = new Set<ReturnType<typeof setTimeout>>()
-  let unresponsiveTimer: ReturnType<typeof setTimeout> | null = null
-  const onGone = (_event: Electron.Event, details: Electron.RenderProcessGoneDetails) => {
-    renderProcessGoneWindows.add(win)
-    logCrash(`render-process-gone[${role}] reason=${details.reason} exitCode=${details.exitCode}`)
-    getRuntime().onRendererGone(role, details.reason)
-    const decision = policy.decide({
-      reason: details.reason,
-      now: Date.now(),
-      appQuitting: getRuntime().isQuitting(),
-    })
+  const state = recovery[role]
+  let pendingUnresponsive = false
+  const cancelTimer = () => {
+    if (state.timer) clearTimeout(state.timer)
+    state.timer = null
+    pendingUnresponsive = false
+  }
+  const recover = (reason: RendererExitReason) => {
+    if (state.stopped || state.timer || win.isDestroyed() || windows[role] !== win) return
+    const decision = state.policy.decide({ reason, now: Date.now(), appQuitting: getRuntime().isQuitting() })
     if (decision.action === 'none') return
     if (decision.action === 'give-up') {
+      state.stopped = true
       logCrash(`renderer recovery budget exhausted[${role}]`)
-      dialog.showErrorBox(
-        'Teleprompt renderer failed',
-        `The ${role} window repeatedly failed and was stopped. Restart Teleprompt; recovery drafts are preserved.`,
-      )
+      // Async native UI keeps IPC and the other surface alive while recovery is stopped.
+      void dialog.showMessageBox({
+        type: 'error',
+        title: 'Teleprompt renderer failed',
+        message: `The ${role} window repeatedly failed and automatic recovery has stopped.`,
+        detail: 'Recovery drafts are preserved. Retry starts a new recovery budget.',
+        buttons: ['Keep stopped', 'Retry'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      }).then(({ response }) => {
+        if (response !== 1 || getRuntime().isQuitting() || windows[role] !== win) return
+        state.policy.reset()
+        state.stopped = false
+        role === 'overlay' ? recreateOverlay() : recreateControls()
+      }).catch((error) => logCrash(`recovery dialog failed[${role}]: ${formatError(error)}`))
       return
     }
-    const timer = setTimeout(() => {
-      timers.delete(timer)
-      if (getRuntime().isQuitting()) return
-      if (decision.action === 'recreate') {
-        role === 'overlay' ? recreateOverlay() : recreateControls()
-      } else if (!win.isDestroyed()) {
-        renderProcessGoneWindows.delete(win)
-        void loadRouteWithRetry(win, role)
-      }
+    state.timer = setTimeout(() => {
+      state.timer = null
+      if (getRuntime().isQuitting() || win.isDestroyed() || windows[role] !== win) return
+      if (decision.action === 'recreate') role === 'overlay' ? recreateOverlay() : recreateControls()
+      else void loadRouteWithRetry(win, role)
     }, decision.delayMs)
-    timers.add(timer)
+  }
+  const onGone = (_event: Electron.Event, details: Electron.RenderProcessGoneDetails) => {
+    readyWindows.delete(win)
+    renderProcessGoneWindows.add(win)
+    cancelTimer()
+    logCrash(`render-process-gone[${role}] reason=${details.reason} exitCode=${details.exitCode}`)
+    getRuntime().onRendererGone(role, details.reason)
+    recover(details.reason)
   }
   const onUnresponsive = () => {
+    if (state.timer || state.stopped || getRuntime().isQuitting()) return
     logCrash(`unresponsive[${role}]`)
     getRuntime().onRendererGone(role, 'unresponsive')
-    if (unresponsiveTimer) return
-    unresponsiveTimer = setTimeout(() => {
-      unresponsiveTimer = null
-      if (getRuntime().isQuitting() || win.isDestroyed()) return
-      role === 'overlay' ? recreateOverlay() : recreateControls()
+    pendingUnresponsive = true
+    state.timer = setTimeout(() => {
+      state.timer = null
+      pendingUnresponsive = false
+      readyWindows.delete(win)
+      recover('unresponsive')
     }, 5_000)
   }
   const onResponsive = () => {
     logCrash(`responsive[${role}]`)
-    if (unresponsiveTimer) clearTimeout(unresponsiveTimer)
-    unresponsiveTimer = null
+    if (pendingUnresponsive) cancelTimer()
+  }
+  const onStartedLoading = () => readyWindows.delete(win)
+  const onLoaded = () => {
+    if (win.isDestroyed() || windows[role] !== win) return
+    renderProcessGoneWindows.delete(win)
+    readyWindows.add(win)
   }
   const onLoadFailure = (
-    _event: Electron.Event,
-    code: number,
-    description: string,
-    url: string,
-    isMainFrame: boolean,
+    _event: Electron.Event, code: number, description: string, url: string, isMainFrame: boolean,
   ) => {
     if (isMainFrame && code !== -3) logCrash(`did-fail-load[${role}] ${code} ${description} ${url}`)
   }
   win.webContents.on('render-process-gone', onGone)
   win.webContents.on('unresponsive', onUnresponsive)
   win.webContents.on('responsive', onResponsive)
+  win.webContents.on('did-start-loading', onStartedLoading)
+  win.webContents.on('did-finish-load', onLoaded)
   win.webContents.on('did-fail-load', onLoadFailure)
   return () => {
-    for (const timer of timers) clearTimeout(timer)
-    timers.clear()
-    if (unresponsiveTimer) clearTimeout(unresponsiveTimer)
-    if (!win.webContents.isDestroyed()) {
+    cancelTimer()
+    readyWindows.delete(win)
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
       win.webContents.off('render-process-gone', onGone)
       win.webContents.off('unresponsive', onUnresponsive)
       win.webContents.off('responsive', onResponsive)
+      win.webContents.off('did-start-loading', onStartedLoading)
+      win.webContents.off('did-finish-load', onLoaded)
       win.webContents.off('did-fail-load', onLoadFailure)
     }
   }
 }
 
 async function loadRoute(win: BrowserWindow, role: RendererRole): Promise<void> {
-  if (RENDERER_DEV) {
+  if (rendererDevUrl()) {
     await win.loadURL(getRendererUrl(role)!)
     if (role === 'controls' && process.env.OPEN_DEVTOOLS === '1') {
       win.webContents.openDevTools({ mode: 'detach' })
@@ -242,10 +291,10 @@ async function loadRouteWithRetry(win: BrowserWindow, role: RendererRole): Promi
     }
   }
   if (!getRuntime().isQuitting() && !win.isDestroyed() && windows[role] === win) {
-    dialog.showErrorBox(
-      'Teleprompt window failed to load',
-      `The ${role} surface could not be loaded after three attempts. Restart Teleprompt; recovery drafts are preserved.`,
-    )
+    void dialog.showMessageBox({
+      type: 'error', title: 'Teleprompt window failed to load',
+      message: `The ${role} surface could not be loaded after three attempts. Restart Teleprompt; recovery drafts are preserved.`,
+    }).catch((error) => logCrash(`load failure dialog: ${formatError(error)}`))
   }
 }
 
@@ -261,7 +310,7 @@ function persistBounds(key: 'overlayBounds' | 'controlsBounds', win: BrowserWind
   if (!win.isDestroyed()) getRuntime().updateBounds(key, win.getBounds())
 }
 
-function clampToDisplay(bounds: Bounds, role: RendererRole): Bounds {
+export function clampToDisplay(bounds: Bounds, role: RendererRole): Bounds {
   const display = screen.getDisplayMatching(bounds)
   const work = display.workArea
   const minWidth = role === 'controls' ? Math.min(560, work.width) : Math.min(200, work.width)
@@ -293,13 +342,27 @@ export function sendOverlayGeometry(geometry: { textH: number; viewportH: number
   sendToWindow(windows.controls, 'overlay:geometry', geometry)
 }
 
+export function sendControlsEvent(
+  channel: 'app:closing' | 'storage:issues' | 'recovery:changed',
+  payload: unknown,
+): void {
+  sendToWindow(windows.controls, channel, payload)
+}
+
 function sendToAll(channel: string, payload: unknown): void {
   sendToWindow(windows.overlay, channel, payload)
   sendToWindow(windows.controls, channel, payload)
 }
 
 function sendToWindow(win: BrowserWindow | undefined, channel: string, payload: unknown): void {
-  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(channel, payload)
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed() ||
+      renderProcessGoneWindows.has(win) || !readyWindows.has(win)) return
+  try {
+    win.webContents.send(channel, payload)
+  } catch (error) {
+    // A renderer can exit between the readiness check and native send.
+    logCrash(`renderer send failed[${channel}]: ${formatError(error)}`)
+  }
 }
 
 export function recreateOverlay(): BrowserWindow {

@@ -23,6 +23,7 @@ export class AppController {
     this.store.patchState({
       playing: true,
       playbackSessionId: sessionId,
+      seekGeneration: 0,
       voicePacing: false,
       voiceStatus: 'off',
       voiceError: null,
@@ -54,6 +55,7 @@ export class AppController {
     const next = Number.isFinite(position) ? Math.max(0, Math.min(1, position)) : 0
     return this.store.patchState({
       scrollPosition: next,
+      seekGeneration: this.store.getSnapshot().seekGeneration + 1,
       ...(next >= 1 ? { playing: false, playbackSessionId: null } : {}),
     })
   }
@@ -67,6 +69,7 @@ export class AppController {
     documentId: DocumentId
     revision: number
     sessionId: string
+    seekGeneration: number
     position: number
     terminal: boolean
   }): { ok: true } | { ok: false; reason: 'stale' | 'invalid' } {
@@ -78,7 +81,8 @@ export class AppController {
       !active ||
       active.id !== input.documentId ||
       active.revision !== input.revision ||
-      snapshot.playbackSessionId !== input.sessionId
+      snapshot.playbackSessionId !== input.sessionId ||
+      snapshot.seekGeneration !== input.seekGeneration
     ) {
       return { ok: false, reason: 'stale' }
     }

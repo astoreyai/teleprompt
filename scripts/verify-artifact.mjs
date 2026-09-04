@@ -1,5 +1,5 @@
 import { constants } from 'node:fs'
-import { access, readdir, stat } from 'node:fs/promises'
+import { access, readFile, readdir, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { FuseState, FuseV1Options, getCurrentFuseWire } from '@electron/fuses'
 
@@ -37,6 +37,12 @@ for (const [fuse, state] of expected) {
   if (wire[fuse] !== state) throw new Error(`fuse ${FuseV1Options[fuse]} is not in the required state`)
 }
 
+const launcher = await readFile(join(appDirectory, 'AppRun'), 'utf8')
+const expectedLauncher = await readFile(new URL('../build/AppRun', import.meta.url), 'utf8')
+if (launcher !== expectedLauncher || launcher.includes('--no-sandbox')) {
+  throw new Error('packaged AppRun must match the reviewed sandbox-preserving launcher')
+}
+await access(join(appDirectory, 'AppRun'), constants.X_OK)
 await access(join(appDirectory, 'resources', 'app.asar'), constants.R_OK)
 await access(join(appDirectory, 'LICENSE.teleprompt.txt'), constants.R_OK)
 try {
@@ -46,4 +52,4 @@ try {
   if (error instanceof Error && !('code' in error && error.code === 'ENOENT')) throw error
 }
 
-process.stdout.write(`artifact verified: ${candidates[0]}\n`)
+process.stdout.write(`artifact layout and fuse settings verified (Linux ASAR runtime integrity is not enforced): ${candidates[0]}\n`)

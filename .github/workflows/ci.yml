@@ -44,6 +44,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Require reviewed real-input release qualification
+        run: node scripts/check-release-qualification.mjs
+
       - name: Unit and coverage gates
         run: npm run test:coverage
 

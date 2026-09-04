@@ -1,9 +1,10 @@
+import { pathToFileURL } from 'node:url'
 import type { DocumentFormat } from '../../shared/contracts.js'
 import { stripHtmlTags } from '../html.js'
 import { odtToText } from '../odt.js'
 import { rtfToText } from '../rtf.js'
 import { srtToText, vttToText } from '../subtitles.js'
-import { inspectZipArchive } from './zip-policy.js'
+import { validateZipExpansion } from './zip-policy.js'
 
 const DEFAULT_ZIP_LIMITS = {
   maxEntries: 2_000,
@@ -16,7 +17,7 @@ export async function parseDocumentBytes(
   bytes: Uint8Array,
   options: { maxOutputChars: number },
 ): Promise<string> {
-  if (format === 'docx' || format === 'odt') inspectZipArchive(bytes, DEFAULT_ZIP_LIMITS)
+  if (format === 'docx' || format === 'odt') await validateZipExpansion(bytes, DEFAULT_ZIP_LIMITS)
   let content: string
   switch (format) {
     case 'docx': {
@@ -29,8 +30,17 @@ export async function parseDocumentBytes(
       content = rtfToText(decodeText(bytes))
       break
     case 'pdf': {
+      // PDF.js excludes Electron utility processes from its Node setup. Install
+      // the same real graphics classes and load its actual worker in this
+      // already killable process before importing the PDF facade.
+      if (process.versions.electron && process.type === 'utility') {
+        const { DOMMatrix, ImageData, Path2D } = await import('@napi-rs/canvas')
+        Object.assign(globalThis, { DOMMatrix, ImageData, Path2D })
+        const { getPath } = await import('pdf-parse/worker')
+        await import(/* @vite-ignore */ pathToFileURL(getPath()).href)
+      }
       const { PDFParse } = await import('pdf-parse')
-      const parser = new PDFParse({ data: new Uint8Array(bytes) })
+      const parser = new PDFParse({ data: new Uint8Array(bytes), useSystemFonts: false, isEvalSupported: false })
       try {
         const result = await parser.getText()
         content = (result.text ?? '').trim()

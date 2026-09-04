@@ -20,6 +20,7 @@ export type PersistedSettings = Omit<
   | 'clickerMode'
   | 'drivePresentation'
   | 'playbackSessionId'
+  | 'seekGeneration'
   | 'overlayVisible'
   | 'voiceStatus'
   | 'voiceError'
@@ -74,6 +75,7 @@ export function persistedFromSnapshot(snapshot: AppSnapshot): PersistedStateV2 {
     clickerMode: _clickerMode,
     drivePresentation: _drivePresentation,
     playbackSessionId: _playbackSessionId,
+    seekGeneration: _seekGeneration,
     overlayVisible: _overlayVisible,
     voiceStatus: _voiceStatus,
     voiceError: _voiceError,

@@ -1,9 +1,10 @@
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { readBoundedRegularFile } from './safe-reader.js'
 
+const readme = await readFile('README.md')
 const created: string[] = []
 
 afterEach(async () => {
@@ -15,10 +16,10 @@ describe('bounded file reader', () => {
     const directory = await mkdtemp(join(tmpdir(), 'teleprompt-read-'))
     created.push(directory)
     const path = join(directory, 'talk.txt')
-    await writeFile(path, 'hello', 'utf8')
-    const result = await readBoundedRegularFile(path, 10)
-    expect(result.bytes.toString('utf8')).toBe('hello')
-    expect(result.size).toBe(5)
+    await writeFile(path, readme)
+    const result = await readBoundedRegularFile(path, readme.length)
+    expect(result.bytes.toString('utf8')).toBe(readme.toString('utf8'))
+    expect(result.size).toBe(readme.length)
     expect(result.mtimeMs).toBeGreaterThan(0)
   })
 
@@ -27,9 +28,9 @@ describe('bounded file reader', () => {
     created.push(directory)
     const target = join(directory, 'target.txt')
     const link = join(directory, 'link.txt')
-    await writeFile(target, '123456789', 'utf8')
+    await writeFile(target, readme)
     await symlink(target, link)
-    await expect(readBoundedRegularFile(link, 20)).rejects.toThrow(/symbolic link|ELOOP/)
-    await expect(readBoundedRegularFile(target, 8)).rejects.toThrow('file too large')
+    await expect(readBoundedRegularFile(link, readme.length)).rejects.toThrow(/symbolic link|ELOOP/)
+    await expect(readBoundedRegularFile(target, readme.length - 1)).rejects.toThrow('file too large')
   })
 })

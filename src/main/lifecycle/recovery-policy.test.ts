@@ -34,4 +34,23 @@ describe('renderer recovery policy', () => {
       delayMs: 10,
     })
   })
+
+  it('budgets unresponsive recreation and permits deliberate reset', () => {
+    const policy = new RendererRecoveryPolicy()
+    const now = Date.now()
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect(policy.decide({ reason: 'unresponsive', now, appQuitting: false }).action).toBe('recreate')
+    }
+    expect(policy.decide({ reason: 'unresponsive', now, appQuitting: false }).action).toBe('give-up')
+    policy.reset()
+    expect(policy.decide({ reason: 'unresponsive', now, appQuitting: false }).action).toBe('recreate')
+  })
+
+  it('expires crash attempts after the documented healthy interval', () => {
+    const policy = new RendererRecoveryPolicy()
+    const now = Date.now()
+    for (let attempt = 0; attempt < 4; attempt += 1) policy.decide({ reason: 'crashed', now, appQuitting: false })
+    expect(policy.decide({ reason: 'crashed', now: now + 60_000, appQuitting: false })).toEqual({ action: 'recreate', delayMs: 250 })
+  })
+
 })

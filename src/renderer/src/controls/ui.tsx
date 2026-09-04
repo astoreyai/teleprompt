@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 export function Panel({
   title,
@@ -132,15 +132,24 @@ export function ConfirmDialog({
 }) {
   const titleId = useId()
   const bodyId = useId()
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const resolveRef = useRef(onResolve)
+  resolveRef.current = onResolve
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onResolve(false)
+    const previousFocus = document.activeElement
+    const dialog = dialogRef.current
+    dialog?.showModal()
+    return () => {
+      dialog?.close()
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus()
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onResolve])
+  }, [])
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onResolve(false)}>
+    <dialog ref={dialogRef} className="modal-backdrop"
+      style={{ margin: 0, width: '100vw', height: '100vh', maxWidth: 'none', maxHeight: 'none', border: 0 }}
+      onCancel={(event) => { event.preventDefault(); resolveRef.current(false) }}
+      onMouseDown={(event) => event.target === event.currentTarget && onResolve(false)}>
+
       <div
         className="modal"
         role="alertdialog"
@@ -151,19 +160,18 @@ export function ConfirmDialog({
         <h2 id={titleId} className="modal__title">{request.title}</h2>
         <p id={bodyId} className="modal__body">{request.body}</p>
         <div className="modal__actions">
-          <button type="button" className="btn" onClick={() => onResolve(false)}>
+          <button type="button" className="btn" onClick={() => onResolve(false)} autoFocus>
             {request.cancelLabel ?? 'Cancel'}
           </button>
           <button
             type="button"
             className={request.danger ? 'btn btn--danger' : 'btn btn--primary'}
             onClick={() => onResolve(true)}
-            autoFocus
           >
             {request.confirmLabel ?? 'Continue'}
           </button>
         </div>
       </div>
-    </div>
+    </dialog>
   )
 }

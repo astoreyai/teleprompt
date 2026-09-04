@@ -28,23 +28,35 @@ export class DocumentImportService {
   private readonly maxInputBytes: number
   private readonly maxOutputChars: number
   private readonly semaphore: AsyncSemaphore
+  private readonly activeImports = new Set<AbortController>()
+  private disposed = false
 
   constructor(
     private readonly parser: DocumentParser,
-    options: { maxInputBytes?: number; maxOutputChars?: number; maxConcurrent?: number } = {},
+    options: { maxInputBytes?: number; maxOutputChars?: number; maxConcurrent?: number; maxPending?: number } = {},
   ) {
     this.maxInputBytes = options.maxInputBytes ?? 10 * 1024 * 1024
     this.maxOutputChars = options.maxOutputChars ?? 10 * 1024 * 1024
-    this.semaphore = new AsyncSemaphore(options.maxConcurrent ?? 2)
+    this.semaphore = new AsyncSemaphore(options.maxConcurrent ?? 2, options.maxPending ?? 16)
   }
 
   async loadPath(path: string, signal?: AbortSignal): Promise<ImportedDocument> {
+    if (this.disposed) throw new Error('document import service closed')
     const format = classifyDocumentPath(path)
     if (!format) throw new Error('unsupported document format')
-    const release = await this.semaphore.acquire(signal)
+    const ownerSignal = signal
+    const controller = new AbortController()
+    const onAbort = () => controller.abort()
+    if (signal?.aborted) controller.abort()
+    else signal?.addEventListener('abort', onAbort, { once: true })
+    this.activeImports.add(controller)
+    let release: (() => void) | undefined
     try {
+      signal = controller.signal
+      release = await this.semaphore.acquire(signal)
       if (signal?.aborted) throw new Error('document import cancelled')
       const source = await readBoundedRegularFile(path, this.maxInputBytes)
+      if (signal.aborted) throw new Error('document import cancelled')
       const canonicalPath = await realpath(path)
       const content = await this.parser.parse(
         format,
@@ -52,6 +64,7 @@ export class DocumentImportService {
         this.maxOutputChars,
         signal,
       )
+      if (signal.aborted) throw new Error('document import cancelled')
       return {
         name: basename(canonicalPath).slice(0, 200),
         sourcePath: canonicalPath,
@@ -62,8 +75,19 @@ export class DocumentImportService {
         dirty: false,
       }
     } finally {
-      release()
+      release?.()
+      ownerSignal?.removeEventListener('abort', onAbort)
+      this.activeImports.delete(controller)
     }
+  }
+
+  dispose(): void {
+    this.disposed = true
+    this.cancelPending()
+  }
+
+  cancelPending(): void {
+    for (const controller of this.activeImports) controller.abort()
   }
 }
 
@@ -76,8 +100,9 @@ class AsyncSemaphore {
     onAbort?: () => void
   }> = []
 
-  constructor(private readonly capacity: number) {
+  constructor(private readonly capacity: number, private readonly maxPending: number) {
     if (!Number.isSafeInteger(capacity) || capacity < 1) throw new Error('invalid import concurrency')
+    if (!Number.isSafeInteger(maxPending) || maxPending < 0) throw new Error('invalid import queue limit')
   }
 
   acquire(signal?: AbortSignal): Promise<() => void> {
@@ -86,6 +111,7 @@ class AsyncSemaphore {
       this.active += 1
       return Promise.resolve(this.releaseOnce())
     }
+    if (this.waiters.length >= this.maxPending) return Promise.reject(new Error('document import queue is full'))
     return new Promise((resolve, reject) => {
       const waiter = { resolve, reject, signal } as (typeof this.waiters)[number]
       if (signal) {

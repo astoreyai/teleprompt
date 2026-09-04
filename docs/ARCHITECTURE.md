@@ -85,7 +85,7 @@ DOCX and ODT archives are inspected before library parsing. ZIP64, encryption, t
 
 The stored document ceiling remains 10 MiB, but memory-expanding interactive features have tighter limits: Markdown falls back to one plain text node above 500,000 visible characters, voice pacing refuses those documents, cue names are capped at 200 characters, and only the first 1,000 cues become UI records. Word statistics scan without creating a full token array.
 
-The save service allows in-place writes only for text, Markdown, and Fountain. It verifies the source hash and modification time, refuses symlinks and non-regular targets, writes a same-directory temporary file, fsyncs it, atomically renames it, and best-effort fsyncs the directory. A conflict leaves both the external source and local recovery draft intact.
+The save service allows in-place writes only for text, Markdown, and Fountain. It verifies the source hash and modification time, refuses symlinks and non-regular targets, writes a same-directory temporary file, fsyncs it, atomically renames it, and best-effort fsyncs the directory. The save path rechecks source bytes and target identity after syncing the temporary file. A detected conflict leaves both the external source and local recovery draft intact. Portable rename still has a final race window; this is not an atomic compare-and-swap with another application.
 
 ## Renderer and IPC boundary
 
@@ -117,3 +117,13 @@ Hardware acceleration is disabled by default. Crashpad is local-only; secret-lik
 The initial deployment target is Linux x64. `electron-builder` produces AppImage, deb, tar.gz, and an unpacked verification target. The `afterPack` hook flips a strict Electron fuse set. `verify-artifact.mjs` reads the packaged executable's fuse wire and requires ASAR-only layout. CI uses Node 22.12, a locked install, audit, type checks, coverage thresholds, production packaging, real-binary Playwright recovery tests, and release checksums.
 
 Unsigned artifacts and lack of an auto-updater are deliberate residual release constraints, not hidden capabilities.
+
+## September 2026 implementation qualification
+
+The Controls loading surface now opens before workspace hydration. Application IPC waits for hydration, and bounds events cannot overwrite persisted state during that interval. Remaining hydration is sequential; active-first background restoration is not yet implemented.
+
+Renderer recovery owns a three-attempt/60-second budget per surface across window replacements. A fourth failure stops automatic recovery and offers an explicit native Retry. Normal close asks the editor to drain its latest pending text, then drains admitted commands and metadata before destroying Controls or quitting. Failed flushing keeps the application open unless the operator explicitly chooses to abandon pending changes.
+
+The v2 metadata format remains readable, and backup references retain needed drafts. Draft bytes represent latest available recovery content, not an exact historical snapshot. Cross-file crash atomicity is not claimed. Unresolved references remain stored until retry succeeds or the operator removes them.
+
+On Linux, artifact verification confirms fuse settings and ASAR layout; it does not establish runtime ASAR integrity enforcement. [Electron documents integrity support for macOS and Windows](https://www.electronjs.org/docs/latest/tutorial/asar-integrity). See the dated audit implementation status for executed checks and remaining qualification gates.

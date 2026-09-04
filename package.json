@@ -1,6 +1,6 @@
 {
   "name": "teleprompt",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Transparent screen-overlay teleprompter with voice pacing, cue points, and presentation drive",
   "main": "out/main/index.js",
   "type": "module",
@@ -21,8 +21,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "npm run package:dir && xvfb-run -a sh -c 'ulimit -c 0; playwright test'",
-    "test:soak": "npm run package:dir && xvfb-run -a sh -c 'ulimit -c 0; playwright test --repeat-each=3'",
+    "test:e2e": "node scripts/run-packaged-tests.mjs",
+    "test:soak": "node scripts/run-packaged-tests.mjs --repeat-each=3",
     "check": "npm run typecheck && npm run test && npm run build",
     "check:release": "npm audit --audit-level=high && npm run typecheck && npm run test:coverage && npm run test:e2e",
     "package:dir": "electron-vite build && electron-builder --linux --dir && npm run verify:artifact",
@@ -30,13 +30,16 @@
     "package:appimage": "electron-vite build && electron-builder --linux AppImage",
     "package:deb": "electron-vite build && electron-builder --linux deb",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "verify:artifact": "node scripts/verify-artifact.mjs release/linux-unpacked"
+    "verify:artifact": "node scripts/verify-artifact.mjs release/linux-unpacked",
+    "test:real": "node scripts/test-real.mjs",
+    "test:stress": "node scripts/run-packaged-tests.mjs --config=playwright.stress.config.ts"
   },
   "engines": {
     "node": ">=22.12.0"
   },
   "dependencies": {
-    "dompurify": "3.4.12",
+    "@napi-rs/canvas": "0.1.80",
+    "dompurify": "3.4.14",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
     "marked": "18.0.6",
@@ -54,7 +57,7 @@
     "@vitejs/plugin-react": "5.2.0",
     "@vitest/coverage-v8": "4.1.10",
     "electron": "43.1.1",
-    "electron-builder": "^26.8.1",
+    "electron-builder": "^26.15.3",
     "electron-vite": "5.0.0",
     "jsdom": "29.1.1",
     "react": "^18.3.0",
@@ -82,6 +85,10 @@
       {
         "from": "LICENSE",
         "to": "LICENSE.teleprompt.txt"
+      },
+      {
+        "from": "build/AppRun",
+        "to": "AppRun"
       }
     ],
     "asar": true,

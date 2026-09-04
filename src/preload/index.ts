@@ -15,6 +15,11 @@ const on = <T>(channel: string, callback: (payload: T) => void): (() => void) =>
 
 if (surface === 'controls') {
   const api: ControlsApi = {
+    onFlushRequest: (callback) => on<string>('editor:flush', callback),
+    acknowledgeFlush: (requestId, ok) => ipcRenderer.invoke('editor:flushed', { requestId, ok }),
+    onStorageIssues: (callback) => on<string[]>('storage:issues', callback),
+    onClosingChanged: (callback) => on<boolean>('app:closing', callback),
+    onUnresolvedDocuments: (callback) => on('recovery:changed', callback),
     bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
     openFiles: () => ipcRenderer.invoke('documents:open'),
     openRecent: (path) => ipcRenderer.invoke('documents:openRecent', { path }),

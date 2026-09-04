@@ -1,0 +1,24 @@
+{
+  "method": "Source review and executed real-input suite; 80 passing tests in 19 files, 2026-09-04. Missing files are not certified.",
+  "files": {
+    "src/main/application/app-store.test.ts": "a299ac0b1cc11756466a63553ae686cf831a860629539efe2457489d086e8996",
+    "src/main/application/app-store.real.test.ts": "0e2cee12743664aaa424e2cacc87c7b72f2e28a2c308150d1e9ba072a4b43da2",
+    "src/main/application/controller.test.ts": "708c738582589135e0052227b09540303bf7c530d25d94891226258cb1fced7a",
+    "src/main/domain/workspace.test.ts": "d15d8d7b2ac6a96db9f666093f24f98898c8211caad89bf8edf5b8ca30ae94c5",
+    "src/main/persistence/repositories.test.ts": "d30822d97daedcf8ca92e9eaeaf4badeaed70650bef9994f50c5b47d1267f6dd",
+    "src/main/documents/import-service.test.ts": "27afee500c84cd31a4a98b02430a5038318f7e11eee6b40619d0d12c6057163b",
+    "src/main/lifecycle/recovery-policy.test.ts": "18b0acf0fd06a2b291573355d58738ac8d57889d4e48bc59bc931439847ff3a0",
+    "src/main/parser/core.real.test.ts": "62bc53eb5c5bf1ee691441b87efd146d504616b1552a5059b2db8eb6cc105cba",
+    "src/main/parser/archive.real.test.ts": "ebae3a6fb330486f727fc1efab0b8503a4b30756b01e013636d5eb775387549c",
+    "src/main/parser/zip-policy.test.ts": "6959c5279874230fb4281bb6166723666f1464254d34d8b28f3ac3ba98a77c96",
+    "src/main/files/atomic-write.test.ts": "ab1f13fb798b25d947746fdf8f0a811d8095d8ea86ac724c18e7ebd243432cae",
+    "src/main/files/safe-reader.test.ts": "345f5d8c60c0d7684ff28012259a21d4155d7205541572da61efd476e0b28ee9",
+    "src/main/files/file-policy.test.ts": "42d7636b6d3b37540872b43e57655d08f9e50404472ff0511bace844b0814ef0",
+    "src/main/platform/ipc-policy.test.ts": "fea1be5cabdab6f2b3a2b92477f81146a9aa11b70fffc07ed9c3e6b04839a3a5",
+    "src/main/platform/renderer-route.test.ts": "ad08169cccdc1038684814efdc8a643d161cec0848b334cdb2923ffd83862776",
+    "src/main/platform/overlay-projection.test.ts": "a18bb9d06645ab2b309e679c16459f4d4e313786b59b3d4c01c1d9f268cfec6d",
+    "src/renderer/src/shared/checkpoint-gate.test.ts": "9249d41e5985199db2525b27b9639d022ea0d06246db1d2374d771745033ce79",
+    "src/renderer/src/shared/render-policy.test.ts": "b6a95995b4c2b04534a871761d3ee130aa516aba99dba2e9364114e70471be1e",
+    "src/renderer/src/shared/voice.test.ts": "56e05e7111ab956fa26d9ae650c9b28f3518541c21f23747226279f2a5ed83d2"
+  }
+}

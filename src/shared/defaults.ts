@@ -11,6 +11,7 @@ export function createDefaultSnapshot(): AppSnapshot {
     scrollSpeed: 60,
     playing: false,
     playbackSessionId: null,
+    seekGeneration: 0,
     overlayVisible: true,
     voiceStatus: 'off',
     voiceError: null,

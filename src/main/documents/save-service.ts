@@ -61,6 +61,7 @@ export class DocumentSaveService {
       targetPath,
       content: document.content,
       expectedMtimeMs,
+      expectedSourceHash: inPlace ? document.sourceHash ?? undefined : undefined,
     })
     if (!saved.ok) {
       if (saved.reason === 'conflict') return { ok: false, reason: 'conflict' }

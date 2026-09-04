@@ -2,9 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { parseCues, stripCues } from '../../../shared/cues'
 import type { AppSnapshot, DocumentContent, DocumentMeta } from '../../../shared/contracts'
 import type { PlatformInfo, PreferencePatch, PresentationStatus } from '../../../shared/ipc'
-import { countWords } from '../../../shared/text'
+import { countWords, MAX_VOICE_PACING_CHARS } from '../../../shared/text'
 import type { BannerPosition, HotkeyCommand } from '../../../shared/types'
-import { EXAMPLES } from '../shared/examples'
 import { indexOfFirstTokenAtOrAfterChar, progressForToken, tokenize, VoicePacer } from '../shared/voice'
 import { EditorPane, type EditorHandle } from './EditorPane'
 import { HotkeysPanel } from './HotkeysPanel'
@@ -23,6 +22,8 @@ const DISPLAY_FAMILIES = [
 export function Controls() {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [documentContent, setDocumentContent] = useState<DocumentContent | null>(null)
+  const [closing, setClosing] = useState(false)
+  const [unresolvedDocuments, setUnresolvedDocuments] = useState<Array<Omit<DocumentMeta, 'saveMode'>>>([])
   const [startupIssues, setStartupIssues] = useState<string[]>([])
   const [fatalError, setFatalError] = useState<string | null>(null)
   const [platform, setPlatform] = useState<PlatformInfo | null>(null)
@@ -33,6 +34,8 @@ export function Controls() {
   const [toast, setToast] = useState<string | null>(null)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null)
+  const confirmationBusy = useRef(false)
+  const confirmationRef = useRef<ConfirmRequest | null>(null)
   const editorRef = useRef<EditorHandle>(null)
   const snapshotRef = useRef<AppSnapshot | null>(null)
   const contentRef = useRef<DocumentContent | null>(null)
@@ -44,10 +47,14 @@ export function Controls() {
     const source = documentContent?.content ?? ''
     const visible = stripCues(source)
     return {
+      visible,
+      tokens: snapshot?.voicePacing && source.length <= MAX_VOICE_PACING_CHARS ? tokenize(visible) : [],
       wordCount: countWords(visible),
       cues: parseCues(source),
     }
-  }, [documentContent?.content])
+  }, [documentContent?.id, documentContent?.revision, documentContent?.content, snapshot?.voicePacing])
+  const derivedRef = useRef(derivedContent)
+  derivedRef.current = derivedContent
 
   const showToast = (message: string, timeoutMs = 5000) => {
     if (toastTimer.current) clearTimeout(toastTimer.current)
@@ -55,12 +62,41 @@ export function Controls() {
     toastTimer.current = setTimeout(() => setToast(null), timeoutMs)
   }
 
+  const perform = async (operation: () => Promise<unknown>): Promise<void> => {
+    try { await operation() }
+    catch (error) { showToast(error instanceof Error ? error.message : 'The operation could not be completed') }
+  }
+
   useEffect(() => {
+    // Renderer-initiated window.close can destroy WebContents before the native
+    // window close hook. Keep this frame alive for the main-process flush protocol.
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = 'Save pending editor changes before closing'
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    const unsubscribeClosing = window.controlsApi.onClosingChanged((value) => {
+      setClosing(value)
+      if (value) {
+        confirmationRef.current?.resolve(false)
+        setConfirmRequest(null)
+      }
+    })
+    const unsubscribeUnresolved = window.controlsApi.onUnresolvedDocuments(setUnresolvedDocuments)
+    const unsubscribeFlush = window.controlsApi.onFlushRequest((requestId) => {
+      void (async () => {
+        let ok = false
+        try { ok = (await editorRef.current?.flush()) ?? true }
+        catch (error) { showToast(error instanceof Error ? error.message : 'Unable to save the editor draft') }
+        await window.controlsApi.acknowledgeFlush(requestId, ok)
+      })().catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Unable to acknowledge close'))
+    })
     const unsubscribeSnapshot = window.controlsApi.onSnapshot(setSnapshot)
     const unsubscribeDocument = window.controlsApi.onActiveDocument(setDocumentContent)
     const unsubscribeProgress = window.controlsApi.onProgress((position) => {
       setSnapshot((current) => (current ? { ...current, scrollPosition: position } : current))
     })
+    const unsubscribeStorage = window.controlsApi.onStorageIssues(setStartupIssues)
     const unsubscribeGeometry = window.controlsApi.onOverlayGeometry(setOverlayGeometry)
 
     void window.controlsApi
@@ -69,6 +105,7 @@ export function Controls() {
         setSnapshot(payload.snapshot)
         setDocumentContent(payload.activeDocument)
         setStartupIssues(payload.startupIssues)
+        setUnresolvedDocuments(payload.unresolvedDocuments)
       })
       .catch((error: unknown) => {
         setFatalError(error instanceof Error ? error.message : 'Controls failed to initialize')
@@ -78,14 +115,24 @@ export function Controls() {
     void window.controlsApi.getHotkeyStatus().then((status) => setFailedHotkeys(status.failed)).catch(() => undefined)
 
     return () => {
+      window.removeEventListener('beforeunload', beforeUnload)
+      unsubscribeClosing()
+      unsubscribeUnresolved()
+      unsubscribeFlush()
+      confirmationRef.current?.resolve(false)
       unsubscribeSnapshot()
       unsubscribeDocument()
       unsubscribeProgress()
       unsubscribeGeometry()
+      unsubscribeStorage()
       voicePacer.current?.stop()
       if (toastTimer.current) clearTimeout(toastTimer.current)
     }
   }, [])
+
+  useEffect(() => {
+    setOverlayGeometry({ textH: 0, viewportH: 0 })
+  }, [documentContent?.id, documentContent?.revision, snapshot?.bannerMode])
 
   useEffect(() => {
     if (!snapshot?.voicePacing || !documentContent) {
@@ -94,44 +141,51 @@ export function Controls() {
       return
     }
     voicePacer.current?.stop()
+    if (documentContent.content.length > MAX_VOICE_PACING_CHARS) {
+      voicePacer.current = null
+      void window.controlsApi.reportVoiceStatus('error', 'This script exceeds the voice pacing size limit')
+      return
+    }
     const pacer = new VoicePacer(
-      () => tokenize(stripCues(contentRef.current?.content ?? '')),
+      () => derivedRef.current.tokens,
       () => {
         const currentSnapshot = snapshotRef.current
         const currentContent = contentRef.current
         if (!currentSnapshot || !currentContent) return 0
-        const stripped = stripCues(currentContent.content)
-        return indexOfFirstTokenAtOrAfterChar(
-          tokenize(stripped),
-          Math.floor(currentSnapshot.scrollPosition * stripped.length),
-        )
+        const { visible, tokens } = derivedRef.current
+        return indexOfFirstTokenAtOrAfterChar(tokens, Math.floor(currentSnapshot.scrollPosition * visible.length))
       },
       (tokenIndex) => {
         const currentContent = contentRef.current
         if (!currentContent) return
-        const stripped = stripCues(currentContent.content)
-        const tokens = tokenize(stripped)
+        const { visible, tokens } = derivedRef.current
         const token = tokens[Math.min(tokenIndex, tokens.length - 1)]
-        if (token) void window.controlsApi.seek(progressForToken(tokens, tokenIndex, stripped.length))
+        if (token) void window.controlsApi.seek(progressForToken(tokens, tokenIndex, visible.length))
       },
       (message) => {
+        if (voicePacer.current !== pacer) return
         showToast(message)
         void window.controlsApi.reportVoiceStatus('error', message)
       },
+      (status) => { if (voicePacer.current === pacer) void window.controlsApi.reportVoiceStatus(status) },
     )
     voicePacer.current = pacer
-    if (pacer.start()) void window.controlsApi.reportVoiceStatus('active')
-    else void window.controlsApi.reportVoiceStatus('error', 'Web Speech recognition is unavailable')
+    pacer.start()
     return () => {
       if (voicePacer.current === pacer) voicePacer.current = null
       pacer.stop()
     }
-  }, [snapshot?.voicePacing, documentContent?.id, documentContent?.revision])
+  }, [snapshot?.voicePacing, documentContent?.id, (documentContent?.content.length ?? 0) > MAX_VOICE_PACING_CHARS])
 
   useEffect(() => {
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      event.preventDefault()
+      showToast(event.reason instanceof Error ? event.reason.message : 'The action could not be completed')
+    }
+    window.addEventListener('unhandledrejection', onUnhandled)
     const preventDefault = (event: DragEvent) => event.preventDefault()
     document.addEventListener('dragover', preventDefault)
-    return () => document.removeEventListener('dragover', preventDefault)
+    return () => { document.removeEventListener('dragover', preventDefault); window.removeEventListener('unhandledrejection', onUnhandled) }
   }, [])
 
   if (fatalError) {
@@ -158,17 +212,28 @@ export function Controls() {
     })
   }
 
-  const askConfirm = (request: Omit<ConfirmRequest, 'resolve'>) =>
-    new Promise<boolean>((resolve) => setConfirmRequest({ ...request, resolve }))
+  const askConfirm = (request: Omit<ConfirmRequest, 'resolve'>) => {
+    if (confirmationBusy.current) return Promise.resolve(false)
+    confirmationBusy.current = true
+    return new Promise<boolean>((resolve) => {
+      const next = { ...request, resolve: (value: boolean) => {
+        confirmationBusy.current = false
+        confirmationRef.current = null
+        resolve(value)
+      } }
+      confirmationRef.current = next
+      setConfirmRequest(next)
+    })
+  }
 
   const flushEditor = async () => (await editorRef.current?.flush()) ?? true
 
-  const selectDocument = async (id: string) => {
+  const selectDocument = (id: string) => perform(async () => {
     if (!(await flushEditor())) return
     await window.controlsApi.selectDocument(id)
-  }
+  })
 
-  const removeDocument = async (item: DocumentMeta) => {
+  const removeDocument = (item: DocumentMeta) => perform(async () => {
     if (item.id === metadata?.id && !(await flushEditor())) return
     let discard = item.dirty
     if (discard) {
@@ -191,15 +256,15 @@ export function Controls() {
       if (confirmed) result = await window.controlsApi.removeDocument(item.id, true)
     }
     if (!result.ok) showToast(`Could not remove ${item.name}: ${result.reason}`)
-  }
+  })
 
-  const openFiles = async () => {
+  const openFiles = () => perform(async () => {
     if (!(await flushEditor())) return
     const result = await window.controlsApi.openFiles()
     if (result.errors.length) showToast(result.errors.map((item) => `${item.name}: ${item.error}`).join(' • '), 8000)
-  }
+  })
 
-  const openDropped = async (files: File[]) => {
+  const openDropped = (files: File[]) => perform(async () => {
     if (!(await flushEditor())) return
     const errors: string[] = []
     for (const file of files) {
@@ -207,7 +272,7 @@ export function Controls() {
       if (!result.ok) errors.push(`${file.name}: ${result.error}`)
     }
     if (errors.length) showToast(errors.join(' • '), 8000)
-  }
+  })
 
   const saveDocument = async (flushFirst = true, forceSaveAs = false) => {
     if (!metadata) return
@@ -216,6 +281,10 @@ export function Controls() {
     try {
       const result = await window.controlsApi.saveDocument(metadata.id, forceSaveAs)
       if (result.ok) setSaveMessage('saved ✓')
+      else if ('sourceSaved' in result && result.sourceSaved) {
+        setSaveMessage('Source saved; workspace recovery metadata could not be saved')
+        showToast(`Source saved, but recovery metadata failed: ${result.error ?? 'storage unavailable'}`, 10000)
+      }
       else if (result.reason === 'cancelled') setSaveMessage(null)
       else if (result.reason === 'conflict' && !forceSaveAs) {
         const saveCopy = await askConfirm({
@@ -238,7 +307,7 @@ export function Controls() {
     setTimeout(() => setSaveMessage(null), 3500)
   }
 
-  const reloadDocument = async () => {
+  const reloadDocument = () => perform(async () => {
     if (!metadata?.sourcePath) return
     if (metadata.dirty || snapshot.editMode) {
       const discard = await askConfirm({
@@ -249,19 +318,32 @@ export function Controls() {
       })
       if (!discard) return
     }
-    const result = await window.controlsApi.reloadDocument(metadata.id, true)
-    if (!result.ok) showToast(`Reload failed: ${result.reason}`)
-  }
+    const editor = editorRef.current
+    await editor?.suspend()
+    try {
+      const result = await window.controlsApi.reloadDocument(metadata.id, true)
+      if (!result.ok) showToast(`Reload failed: ${result.reason}`)
+      else {
+        const payload = await window.controlsApi.bootstrap()
+        setDocumentContent(payload.activeDocument)
+        if (payload.activeDocument?.id === metadata.id) editor?.resume(payload.activeDocument)
+      }
+    } finally { editor?.resume() }
+  })
 
-  const createDocument = async (name: string, content: string, edit = false) => {
+  const createDocument = (name: string, content: string, edit = false) => perform(async () => {
     if (!(await flushEditor())) return
     const format = name.endsWith('.md') ? 'markdown' : name.endsWith('.fountain') ? 'fountain' : 'text'
     await window.controlsApi.createDocument(name, content, format)
     if (edit) patch({ editMode: true })
-  }
+  })
 
   return (
+    <>
+    {closing && <div className="banner-warn" role="status">Saving the editor and closing the workspace…</div>}
     <div
+      {...(closing ? { inert: '' } : {})}
+      aria-busy={closing}
       className={`controls ${dragOver ? 'controls--drop' : ''}`}
       onDragOver={(event) => {
         event.preventDefault()
@@ -325,6 +407,31 @@ export function Controls() {
             </div>
           ))}
         </div>
+        {unresolvedDocuments.length > 0 && (
+          <section aria-label="Unavailable scripts">
+            <h2 className="sidebar__section-title">Unavailable scripts</h2>
+            {unresolvedDocuments.map((item) => (
+              <div key={item.id} className="file">
+                <span className="file__name" title={item.sourcePath ?? item.name}>{item.name}</span>
+                <button type="button" className="btn" onClick={() => perform(async () => {
+                  const result = await window.controlsApi.reloadDocument(item.id, false)
+                  if (!result.ok) showToast(`Retry failed: ${result.reason}`)
+                })}>Retry</button>
+                <button type="button" className="btn" onClick={() => perform(async () => {
+                  const discard = await askConfirm({
+                    title: `Remove “${item.name}”?`,
+                    body: 'Remove this unavailable script from recovery? Its original source file will remain unchanged.',
+                    confirmLabel: 'Remove from recovery',
+                    danger: true,
+                  })
+                  if (!discard) return
+                  const result = await window.controlsApi.removeDocument(item.id, true)
+                  if (!result.ok) showToast(`Remove failed: ${result.reason}`)
+                })}>Remove</button>
+              </div>
+            ))}
+          </section>
+        )}
         {snapshot.recentFiles.length > 0 && (
           <section className="recent" aria-labelledby="recent-heading">
             <h2 id="recent-heading" className="sidebar__section-title">Recent</h2>
@@ -334,32 +441,18 @@ export function Controls() {
                 key={path}
                 className="recent__item"
                 title={path}
-                onClick={async () => {
+                onClick={() => perform(async () => {
                   if (!(await flushEditor())) return
                   const result = await window.controlsApi.openRecent(path)
                   if (!result.ok) showToast(`${fileName(path)}: ${result.error}`)
-                }}
+                })}
               >
                 {fileName(path)}
               </button>
             ))}
           </section>
         )}
-        <section className="examples" aria-labelledby="examples-heading">
-          <h2 id="examples-heading" className="sidebar__section-title">Examples</h2>
-          {EXAMPLES.filter((example) => !example.fileName.endsWith('.srt')).map((example) => (
-            <button
-              type="button"
-              key={example.fileName}
-              className="example"
-              onClick={() => void createDocument(example.fileName, example.content)}
-              title={example.description}
-            >
-              <span className="example__name">{example.label}</span>
-              <span className="example__desc">{example.description}</span>
-            </button>
-          ))}
-        </section>
+
       </aside>
 
       <main className="main">
@@ -379,15 +472,15 @@ export function Controls() {
             type="button"
             className="btn btn--primary"
             disabled={!activeContent}
-            onClick={async () => {
+            onClick={() => perform(async () => {
               if (!(await flushEditor())) return
               const result = await window.controlsApi.togglePlayback()
               if (!result.ok) showToast(result.reason ?? 'Unable to start playback')
-            }}
+            })}
           >
             {snapshot.playing ? 'Pause' : 'Play'}
           </button>
-          <button type="button" className="btn" disabled={!activeContent} onClick={() => void window.controlsApi.restartPlayback()}>
+          <button type="button" className="btn" disabled={!activeContent} onClick={() => void perform(() => window.controlsApi.restartPlayback())}>
             Restart
           </button>
           <button type="button" className="btn" disabled={!metadata?.sourcePath} onClick={() => void reloadDocument()}>
@@ -406,7 +499,7 @@ export function Controls() {
             step={0.001}
             value={snapshot.scrollPosition}
             disabled={!activeContent}
-            onChange={(event) => void window.controlsApi.seek(Number(event.target.value))}
+            onChange={(event) => void perform(() => window.controlsApi.seek(Number(event.target.value)))}
           />
           <output className="transport__pos" htmlFor="playback-position">
             {(snapshot.scrollPosition * 100).toFixed(0)}%
@@ -501,7 +594,7 @@ export function Controls() {
               label="Listen and auto-advance"
               checked={snapshot.voicePacing}
               disabled={!activeContent}
-              onChange={async (enabled) => {
+              onChange={(enabled) => perform(async () => {
                 if (enabled && !snapshot.voiceConsent) {
                   const consent = await askConfirm({
                     title: 'Enable voice pacing?',
@@ -513,7 +606,7 @@ export function Controls() {
                 }
                 const result = await window.controlsApi.requestVoice(enabled)
                 if (!result.ok) showToast(result.reason ?? 'Voice pacing could not start')
-              }}
+              })}
               hint="Microphone access is explicit and the active state is shown below."
             />
             <p className="form-hint">Status: <strong>{snapshot.voiceStatus}</strong>{snapshot.voiceError ? ` — ${snapshot.voiceError}` : ''} · {wordCount} script words</p>
@@ -521,18 +614,18 @@ export function Controls() {
               type="button"
               className="btn"
               disabled={!snapshot.voiceConsent}
-              onClick={async () => {
+              onClick={() => perform(async () => {
                 await window.controlsApi.revokeVoiceConsent()
                 showToast('Microphone consent revoked')
-              }}
+              })}
             >
               Revoke microphone consent
             </button>
           </Panel>
 
           <Panel title="Editing">
-            <Toggle label="Show live editor" checked={snapshot.editMode} disabled={!activeContent} onChange={(editMode) => patch({ editMode })} />
-            <button type="button" className="btn" onClick={() => void createDocument(`untitled-${Date.now()}.md`, '# New script\n\n[[CUE: intro]] Start typing…', true)}>
+            <Toggle label="Show live editor" checked={snapshot.editMode} disabled={!activeContent} onChange={(editMode) => perform(async () => { if (editMode || await flushEditor()) patch({ editMode }) })} />
+            <button type="button" className="btn" onClick={() => void createDocument(`untitled-${Date.now()}.md`, '', true)}>
               New blank script
             </button>
             {metadata?.saveMode === 'save-as' && <p className="form-hint">Imported {metadata.format.toUpperCase()} content is extracted text. Saving always creates a new text/Markdown file and never overwrites the source document.</p>}
@@ -544,7 +637,7 @@ export function Controls() {
             <div className="cues">
               {cues.length === 0 && <span className="form-hint">No cues in this script.</span>}
               {cues.map((cue) => (
-                <button type="button" key={cue.index} className="cue" onClick={() => void window.controlsApi.seek(cue.position)}>
+                <button type="button" key={cue.index} className="cue" onClick={() => void perform(() => window.controlsApi.seek(cue.position))}>
                   <span className="cue__num">{cue.index < 9 ? `⌃⌥${cue.index + 1}` : `#${cue.index + 1}`}</span>
                   <span className="cue__name">{cue.name}</span>
                   <span className="cue__pct">{(cue.position * 100).toFixed(0)}%</span>
@@ -586,6 +679,7 @@ export function Controls() {
         </footer>
       </main>
     </div>
+    </>
   )
 }
 

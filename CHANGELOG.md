@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1 — 2026-09-04
+
+- Preserve pending editor text during native and renderer-initiated close, keep storage failures visible, and retain recoverable draft references.
+- Bound renderer recovery across window replacements and reject delayed playback checkpoints after a seek.
+- Repair PDF importing inside Electron's utility process; tighten archive validation and import admission.
+- Refresh vulnerable dependencies and preserve sandboxing in the AppImage launcher.
+- Add real-input packaged and measured stress checks. Full release qualification remains blocked on legacy test conversion and device/corpus coverage.
+
 Notable user-visible and architectural changes are recorded here. Teleprompt follows semantic versioning from the 1.0 release onward.
 
 ## 1.0.0 — 2026-07-19

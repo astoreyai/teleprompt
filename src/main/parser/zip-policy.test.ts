@@ -1,38 +1,24 @@
-import JSZip from 'jszip'
+import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
-import { inspectZipArchive } from './zip-policy.js'
+import { inspectZipArchive, validateZipExpansion } from './zip-policy.js'
 
-describe('zip archive policy', () => {
-  it('accepts a small bounded archive', async () => {
-    const zip = new JSZip()
-    zip.file('content.xml', '<p>Hello</p>')
-    const bytes = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
-    expect(inspectZipArchive(bytes, { maxEntries: 4, maxExpandedBytes: 1024, maxRatio: 20 })).toMatchObject({
-      entries: 1,
-    })
+// The optional corpus is an actual operator-owned document, read without transformation.
+// Binary document bytes stay outside the repository; do not supply generated test archives.
+const officePath = process.env.TELEPROMPT_REAL_DOCX
+const limits = { maxEntries: 2_000, maxExpandedBytes: 25 * 1024 * 1024, maxRatio: 100 }
+
+describe.skipIf(!officePath)('zip archive policy with real office input', () => {
+  it('accepts a bounded archive and validates its actual streamed expansion', async () => {
+    const bytes = await readFile(officePath!)
+    expect(inspectZipArchive(bytes, limits).entries).toBeGreaterThan(0)
+    await expect(validateZipExpansion(bytes, limits)).resolves.toBeUndefined()
   })
 
   it('rejects excessive expansion and entry counts before extraction', async () => {
-    const expanding = new JSZip()
-    expanding.file('content.xml', 'A'.repeat(100_000))
-    const expandingBytes = await expanding.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
-    expect(() =>
-      inspectZipArchive(expandingBytes, {
-        maxEntries: 4,
-        maxExpandedBytes: 200_000,
-        maxRatio: 10,
-      }),
-    ).toThrow('compression ratio')
-
-    const crowded = new JSZip()
-    for (let index = 0; index < 5; index += 1) crowded.file(`${index}.txt`, 'x')
-    const crowdedBytes = await crowded.generateAsync({ type: 'nodebuffer' })
-    expect(() =>
-      inspectZipArchive(crowdedBytes, {
-        maxEntries: 4,
-        maxExpandedBytes: 1024,
-        maxRatio: 20,
-      }),
-    ).toThrow('too many entries')
+    const bytes = await readFile(officePath!)
+    const summary = inspectZipArchive(bytes, limits)
+    expect(() => inspectZipArchive(bytes, { ...limits, maxRatio: summary.ratio / 2 })).toThrow('compression ratio')
+    expect(() => inspectZipArchive(bytes, { ...limits, maxEntries: summary.entries - 1 })).toThrow('too many entries')
+    expect(() => inspectZipArchive(bytes, { ...limits, maxExpandedBytes: summary.expandedBytes - 1 })).toThrow('expanded content too large')
   })
 })
