@@ -1,0 +1,40 @@
+{
+  "reviewedUnitSubset": {
+    "passed": 80,
+    "failed": 0,
+    "pending": 0,
+    "reviewedSuites": 19
+  },
+  "installedRuntime": {
+    "startTime": "2026-09-04T23:08:51.646Z",
+    "duration": 91825.55,
+    "expected": 20,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "extractedAppImageRuntime": {
+    "startTime": "2026-09-04T23:10:46.276Z",
+    "duration": 45794.688,
+    "expected": 10,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "installedStress": {
+    "passed": true,
+    "iterations": 13,
+    "requestedDurationMs": 10000,
+    "elapsedMs": 17440,
+    "appAsarSha256": "8011bb23da68abfe01cb8f1370bbff3dc2cde983f288839b721f1d6b92c2de52"
+  },
+  "fullReleaseQualification": {
+    "exitCode": 1,
+    "output": "Full release qualification is blocked by 9 unreviewed real-input suites:\nsrc/main/diagnostic-log.test.ts\nsrc/main/documents/save-service.test.ts\nsrc/main/lifecycle/crash-retention.test.ts\nsrc/main/parser/parser-core.test.ts\nsrc/main/parser/supervisor.test.ts\nsrc/main/persistence/schema.test.ts\nsrc/main/presentation.test.ts\nsrc/shared/cues.test.ts\nsrc/shared/text.test.ts\nThe review manifest must record actual reviewed and executed suite hashes; it cannot certify missing corpus or unexecuted tests.\n"
+  },
+  "typecheckExitCode": 0,
+  "dependencyAuditExitCode": 0,
+  "dependencyAuditVulnerabilities": 0,
+  "dpkgVerificationExitCode": 0,
+  "artifactVerifierExitCode": 0
+}

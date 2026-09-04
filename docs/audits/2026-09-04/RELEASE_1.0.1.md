@@ -1,5 +1,7 @@
 # Teleprompt 1.0.1 installation and stress qualification
 
+**Performance correction:** the later [reassessment](PERFORMANCE_REASSESSMENT.md) confirmed that the prolonged insertion stalls below came from Playwright's CDP insertion path. Native paste of the same real input is much faster. The original RSS figures also use incomplete process-tree enumeration and are not normal-session memory measurements. Retain these historical results as automation-path observations; use the reassessment for current interpretation.
+
 The user authorized push, deployment, installation and stress testing on 2026-09-04. This report records observed qualification limits; it is not a full release sign-off.
 
 ## Installation

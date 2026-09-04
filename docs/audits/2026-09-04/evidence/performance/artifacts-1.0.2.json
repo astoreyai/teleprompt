@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Teleprompt-1.0.2-x86_64.AppImage",
+    "bytes": 161240417,
+    "sha256": "0f328ac2e0d2f364aea9c0583a92f757479b3fce2b66169c84284b87da763283"
+  },
+  {
+    "name": "teleprompt_1.0.2_amd64.deb",
+    "bytes": 124834500,
+    "sha256": "93e473f102c3f1ca2665dfefe82ec1233201bc4aea459877e439d2983d71e7ba"
+  },
+  {
+    "name": "teleprompt-1.0.2.tar.gz",
+    "bytes": 152891065,
+    "sha256": "ee85d86c350b3cc349b2ffd2c96fb9072d7bb940ae7aee495a8dfbd4ec91299a"
+  }
+]

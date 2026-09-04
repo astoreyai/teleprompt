@@ -1,6 +1,6 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import type { AppSnapshot, DocumentContent, DocumentFormat, DocumentId, OverlaySnapshot } from '../shared/contracts.js'
-import type { ControlsApi, OverlayApi, PreferencePatch } from '../shared/ipc.js'
+import type { ControlsApi, ControlsBootstrapPayload, OverlayApi, OverlayBootstrapPayload, PreferencePatch } from '../shared/ipc.js'
 import type { HotkeyCommand } from '../shared/types.js'
 
 const surface = process.argv
@@ -13,6 +13,41 @@ const on = <T>(channel: string, callback: (payload: T) => void): (() => void) =>
   return () => ipcRenderer.off(channel, listener)
 }
 
+let largestSinceRelease = 0
+let releaseTimer: ReturnType<typeof setTimeout> | null = null
+const trackDocumentMemory = (document: DocumentContent | null): void => {
+  if (releaseTimer) clearTimeout(releaseTimer)
+  releaseTimer = null
+  const length = document?.content.length ?? 0
+  largestSinceRelease = Math.max(largestSinceRelease, length)
+  // A large-to-small transition discards substantial Blink layout state.
+  // Wait for the new view to settle, and cancel if more content arrives.
+  if (largestSinceRelease >= 500_000 && length <= largestSinceRelease / 4) {
+    releaseTimer = setTimeout(() => {
+      releaseTimer = null
+      webFrame.clearCache()
+      largestSinceRelease = length
+    }, 250)
+  }
+}
+
+const bootstrap = async <T extends ControlsBootstrapPayload | OverlayBootstrapPayload>(): Promise<T> => {
+  const payload: T = await ipcRenderer.invoke('app:bootstrap')
+  trackDocumentMemory(payload.activeDocument)
+  return payload
+}
+
+const onActiveDocument = (callback: (document: DocumentContent | null) => void): (() => void) => {
+  const unsubscribe = on<DocumentContent | null>('document:changed', (document) => {
+    callback(document)
+    trackDocumentMemory(document)
+  })
+  return () => {
+    if (releaseTimer) clearTimeout(releaseTimer)
+    unsubscribe()
+  }
+}
+
 if (surface === 'controls') {
   const api: ControlsApi = {
     onFlushRequest: (callback) => on<string>('editor:flush', callback),
@@ -20,7 +55,7 @@ if (surface === 'controls') {
     onStorageIssues: (callback) => on<string[]>('storage:issues', callback),
     onClosingChanged: (callback) => on<boolean>('app:closing', callback),
     onUnresolvedDocuments: (callback) => on('recovery:changed', callback),
-    bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
+    bootstrap: () => bootstrap<ControlsBootstrapPayload>(),
     openFiles: () => ipcRenderer.invoke('documents:open'),
     openRecent: (path) => ipcRenderer.invoke('documents:openRecent', { path }),
     openDroppedFile: (file) => {
@@ -61,7 +96,7 @@ if (surface === 'controls') {
     importPreferences: () => ipcRenderer.invoke('preferences:import'),
     getAbout: () => ipcRenderer.invoke('preferences:about'),
     onSnapshot: (callback) => on<AppSnapshot>('snapshot:changed', callback),
-    onActiveDocument: (callback) => on<DocumentContent | null>('document:changed', callback),
+    onActiveDocument,
     onProgress: (callback) => on<number>('playback:progress', callback),
     onOverlayGeometry: (callback) =>
       on<{ textH: number; viewportH: number }>('overlay:geometry', callback),
@@ -69,7 +104,7 @@ if (surface === 'controls') {
   contextBridge.exposeInMainWorld('controlsApi', api)
 } else if (surface === 'overlay') {
   const api: OverlayApi = {
-    bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
+    bootstrap: () => bootstrap<OverlayBootstrapPayload>(),
     togglePlayback: () => ipcRenderer.invoke('playback:toggle'),
     focusControls: () => ipcRenderer.invoke('controls:focus'),
     checkpoint: (input) => ipcRenderer.invoke('playback:checkpoint', input),
@@ -86,7 +121,7 @@ if (surface === 'controls') {
     resizeEnd: () => ipcRenderer.invoke('overlay:resizeEnd'),
     openEditor: () => ipcRenderer.invoke('overlay:openEditor'),
     onSnapshot: (callback) => on<OverlaySnapshot>('snapshot:changed', callback),
-    onActiveDocument: (callback) => on<DocumentContent | null>('document:changed', callback),
+    onActiveDocument,
   }
   contextBridge.exposeInMainWorld('overlayApi', api)
 } else {

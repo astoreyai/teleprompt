@@ -1,0 +1,105 @@
+{
+  "installedAppAsarSha256": "1dc25e388f2631697ac59d0088859786d7fc399268459cbf08681ea6c91da8b7",
+  "memoryScope": "Diagnostic process sampler followed only process-leader children; values are partial-tree lower bounds, not total application memory.",
+  "cdpFill": {
+    "input": {
+      "bytes": 588085,
+      "mtime": "2026-07-19T03:36:09.102Z",
+      "sha256": "e134052a6b1ded61693b4037f615dc72f14e2881e79c1ddbff6c514c8a516b05"
+    },
+    "timedActions": [
+      {
+        "elapsedMs": 176262.969845,
+        "phase": "fill end",
+        "durationMs": 175677.967889
+      },
+      {
+        "elapsedMs": 176321.167819,
+        "phase": "blur end",
+        "durationMs": 57.28845900000306
+      },
+      {
+        "elapsedMs": 176339.84052,
+        "phase": "banner end",
+        "durationMs": 18.496629999979632
+      },
+      {
+        "elapsedMs": 176360.623923,
+        "phase": "play end",
+        "durationMs": 20.141783999977633
+      },
+      {
+        "elapsedMs": 176378.771212,
+        "phase": "seek end",
+        "durationMs": 16.88244100002339
+      },
+      {
+        "elapsedMs": 176389.706604,
+        "phase": "pause end",
+        "durationMs": 10.216661000013119
+      }
+    ],
+    "metrics": {
+      "LayoutCount": 34308,
+      "RecalcStyleCount": 57182,
+      "LayoutDuration": 58.605375,
+      "RecalcStyleDuration": 8.240836,
+      "ScriptDuration": 3.034161,
+      "TaskDuration": 175.807321,
+      "JSHeapUsedSize": 8575416
+    }
+  },
+  "nativePaste": {
+    "input": {
+      "bytes": 588085,
+      "mtime": "2026-07-19T03:36:09.102Z",
+      "sha256": "e134052a6b1ded61693b4037f615dc72f14e2881e79c1ddbff6c514c8a516b05"
+    },
+    "timedActions": [
+      {
+        "elapsedMs": 893.3077109999999,
+        "phase": "paste end",
+        "durationMs": 206.02874600000007
+      },
+      {
+        "elapsedMs": 919.4118060000001,
+        "phase": "paste confirmation end",
+        "durationMs": 25.630769999999984
+      },
+      {
+        "elapsedMs": 928.469106,
+        "phase": "blur end",
+        "durationMs": 8.821807000000035
+      },
+      {
+        "elapsedMs": 930.72676,
+        "phase": "banner end",
+        "durationMs": 2.048900999999887
+      },
+      {
+        "elapsedMs": 934.661638,
+        "phase": "play end",
+        "durationMs": 3.736015999999836
+      },
+      {
+        "elapsedMs": 944.5730189999999,
+        "phase": "seek end",
+        "durationMs": 9.717276000000084
+      },
+      {
+        "elapsedMs": 947.3280010000001,
+        "phase": "pause end",
+        "durationMs": 2.52173700000003
+      }
+    ],
+    "metrics": {
+      "LayoutCount": 4,
+      "RecalcStyleCount": 8,
+      "LayoutDuration": 0.093572,
+      "RecalcStyleDuration": 0.013093,
+      "ScriptDuration": 0.007872,
+      "TaskDuration": 0.323014,
+      "JSHeapUsedSize": 7760388
+    }
+  }
+}

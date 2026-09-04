@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2 — 2026-09-04
+
+- Release unused renderer resources after large-to-small document transitions, including restored documents, while preserving native Undo/Redo.
+- Exercise native clipboard paste in isolated stress runs; report proportional and private memory across descendants launched by all process threads.
+- Record application archive hashes with stress measurements and fail persisted reports when memory sampling fails.
+- Install the native clipboard dependency in CI and use the isolated packaged-test runner. Full qualification still requires real-input conversion of nine legacy suites and a publishable document corpus.
+
 ## 1.0.1 — 2026-09-04
 
 - Preserve pending editor text during native and renderer-initiated close, keep storage failures visible, and retain recoverable draft references.

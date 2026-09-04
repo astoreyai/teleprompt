@@ -28,5 +28,5 @@ if (!environment.TELEPROMPT_E2E_EXECUTABLE) {
   process.stdout.write(`Retained review artifact: ${output}\n`)
 }
 run(process.execPath, ['scripts/verify-artifact.mjs', dirname(resolve(environment.TELEPROMPT_E2E_EXECUTABLE))])
-run('xvfb-run', ['-a', 'sh', '-c', 'ulimit -c 0; exec "$@"', 'teleprompt-tests',
+run('xvfb-run', ['-a', 'sh', '-c', 'ulimit -c 0; export TELEPROMPT_TEST_DISPLAY="$DISPLAY"; exec "$@"', 'teleprompt-tests',
   resolve('node_modules/.bin/playwright'), 'test', ...process.argv.slice(2)])

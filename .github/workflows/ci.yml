@@ -33,7 +33,7 @@ jobs:
       - name: Install Linux runtime libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 libatspi2.0-0
+          sudo apt-get install -y xvfb xclip libgtk-3-0 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 libatspi2.0-0
 
       - name: Install locked dependencies
         run: npm ci
@@ -60,7 +60,9 @@ jobs:
           test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
 
       - name: Packaged crash/recovery smoke test
-        run: xvfb-run -a sh -c 'ulimit -c 0; npx playwright test'
+        env:
+          TELEPROMPT_E2E_EXECUTABLE: release/linux-unpacked/teleprompt
+        run: npm run test:e2e
 
       - name: Build distributable formats
         if: startsWith(github.ref, 'refs/tags/v')

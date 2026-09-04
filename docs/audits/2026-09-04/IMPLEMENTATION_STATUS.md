@@ -54,7 +54,7 @@ node_modules/.bin/electron-builder --linux --dir --config.directories.output=/tm
 node scripts/verify-artifact.mjs /tmp/teleprompt-implementation/release/linux-unpacked
 ```
 
-For this host, the packaged runner uses `TELEPROMPT_E2E_EXECUTABLE=/tmp/teleprompt-implementation/release/linux-unpacked/teleprompt` and `CHROME_DEVEL_SANDBOX=/mnt/projects/teleprompt/release/linux-unpacked/chrome-sandbox`. Verify helper ownership/mode before reuse. Run `xvfb-run -a sh -c 'ulimit -c 0; node_modules/.bin/playwright test --retries=0'`. Use `--repeat-each=2` for the recorded repeated gate. All document modifications and crash probes target disposable profiles/copies.
+For this host, the packaged runner uses `TELEPROMPT_E2E_EXECUTABLE=/tmp/teleprompt-implementation/release/linux-unpacked/teleprompt` and `CHROME_DEVEL_SANDBOX=/mnt/projects/teleprompt/release/linux-unpacked/chrome-sandbox`. Verify helper ownership/mode before reuse. Run `npm run test:e2e -- --retries=0`. The runner creates an isolated Xvfb display and exports the marker required by native clipboard tests; `xclip` must be installed. Use `--repeat-each=2` for the recorded repeated gate. All document modifications and crash probes target disposable profiles/copies.
 
 Rollback: restore the reviewed source/lockfile slice and rebuild the previous artifact. Do not overwrite unrelated dirty files or reuse a test fault profile as a live profile. At this implementation checkpoint, no commit, push, deployment, native installation, or publication had been performed. The subsequent authorized installation is recorded in RELEASE_1.0.1.md.
 

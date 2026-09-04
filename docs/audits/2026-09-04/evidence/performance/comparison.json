@@ -1,0 +1,55 @@
+{
+  "method": "One sequential pair of five-minute native-paste workloads; 270\u2013300 second private-memory median is measured from the common post-launch sampling origin. Sampled full-run peaks include initial large-document rendering. This is not an hour-scale or hardware-independent bound.",
+  "versions": {
+    "1.0.1": {
+      "appAsarSha256": "1dc25e388f2631697ac59d0088859786d7fc399268459cbf08681ea6c91da8b7",
+      "iterations": 387,
+      "elapsedMs": 307969,
+      "peakPrivateBytes": 2525007872,
+      "peakPssBytes": 2728537088,
+      "peakRssBytes": 3329515520,
+      "privateMedian270to300Seconds": 2427486208,
+      "iterationLatencyMs": {
+        "count": 387,
+        "median": 282.37655299998005,
+        "p95": 393.37025500000163,
+        "max": 798.0250710000037
+      },
+      "pasteLatencyMs": {
+        "count": 387,
+        "median": 48.86055900000065,
+        "p95": 197.44010399999388,
+        "max": 633.2426750000013
+      },
+      "importBurst": {
+        "admitted": 18,
+        "refused": 6
+      }
+    },
+    "1.0.2": {
+      "appAsarSha256": "8011bb23da68abfe01cb8f1370bbff3dc2cde983f288839b721f1d6b92c2de52",
+      "iterations": 385,
+      "elapsedMs": 307715,
+      "peakPrivateBytes": 1755951104,
+      "peakPssBytes": 1932211200,
+      "peakRssBytes": 2637717504,
+      "privateMedian270to300Seconds": 1097347072.0,
+      "iterationLatencyMs": {
+        "count": 385,
+        "median": 274.6277850000188,
+        "p95": 408.84712599997874,
+        "max": 616.6679769999755
+      },
+      "pasteLatencyMs": {
+        "count": 385,
+        "median": 41.75263599999016,
+        "p95": 233.28900600000634,
+        "max": 260.93510999999125
+      },
+      "importBurst": {
+        "admitted": 18,
+        "refused": 6
+      }
+    }
+  }
+}
