@@ -93,6 +93,14 @@ jobs:
           }, null, 2) + '\n')
           NODE
 
+      - name: Isolate native crash checks from the runner core collector
+        run: |
+          cat /proc/sys/kernel/core_pattern > "$RUNNER_TEMP/teleprompt-core-pattern-before.txt"
+          cp "$RUNNER_TEMP/teleprompt-core-pattern-before.txt" test-results/native-core-pattern-before.txt
+          # Controlled CI experiment: ulimit -c 0 already disables ordinary core
+          # files. Leave Crashpad, AppArmor, namespace sandbox and Yama unchanged.
+          sudo sysctl -w "kernel.core_pattern=$RUNNER_TEMP/teleprompt-kernel-core.%P"
+
       - name: Packaged runtime and native crash capture
         id: native-runtime
         env:
@@ -116,6 +124,7 @@ jobs:
           sudo journalctl -k --since "$(cat test-results/native-started-at.txt)" --no-pager > test-results/native-kernel-journal.txt 2>&1 || true
           sudo dmesg --ctime | tail -n 2000 > test-results/native-dmesg.txt 2>&1 || true
           sudo aa-status > test-results/native-apparmor-after.txt 2>&1 || true
+          sudo journalctl --since "$(cat test-results/native-started-at.txt)" -t systemd-coredump --no-pager > test-results/native-core-collector-journal.txt 2>&1 || true
 
       - name: Select genuine Crashpad input from this run
         run: |
@@ -144,6 +153,17 @@ jobs:
 
       - name: Full unit and coverage gates
         run: npm run test:coverage
+
+      - name: Restore runner core collector
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/teleprompt-core-pattern-before.txt"; then
+            sudo sysctl -w "kernel.core_pattern=$(cat "$RUNNER_TEMP/teleprompt-core-pattern-before.txt")"
+            if compgen -G "$RUNNER_TEMP/teleprompt-kernel-core.*"; then
+              echo 'Unexpected kernel core files were created despite ulimit -c 0' >&2
+              exit 1
+            fi
+          fi
 
       - name: Upload verification reports
         if: always()
