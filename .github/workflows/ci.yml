@@ -94,9 +94,28 @@ jobs:
           NODE
 
       - name: Packaged runtime and native crash capture
+        id: native-runtime
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/packaged.json
-        run: npm run test:e2e -- --retries=0 --reporter=json --output=test-results/runtime
+        run: |
+          date --iso-8601=seconds > test-results/native-started-at.txt
+          {
+            uname -a
+            sysctl kernel.yama.ptrace_scope fs.suid_dumpable kernel.apparmor_restrict_unprivileged_userns kernel.core_pattern kernel.core_pipe_limit
+            sudo aa-status
+            cat "$RUNNER_TEMP/teleprompt-ci.apparmor"
+            for key in DBUS_SESSION_BUS_ADDRESS DBUS_SYSTEM_BUS_ADDRESS DISPLAY XDG_RUNTIME_DIR; do
+              printf '%s=%s\n' "$key" "${!key-<unset>}"
+            done
+          } > test-results/native-environment.txt 2>&1
+          npm run test:e2e -- --retries=0 --max-failures=1 --reporter=json --output=test-results/runtime
+
+      - name: Capture native failure environment
+        if: ${{ always() && steps.native-runtime.outcome != 'skipped' }}
+        run: |
+          sudo journalctl -k --since "$(cat test-results/native-started-at.txt)" --no-pager > test-results/native-kernel-journal.txt 2>&1 || true
+          sudo dmesg --ctime | tail -n 2000 > test-results/native-dmesg.txt 2>&1 || true
+          sudo aa-status > test-results/native-apparmor-after.txt 2>&1 || true
 
       - name: Select genuine Crashpad input from this run
         run: |
@@ -133,6 +152,7 @@ jobs:
           name: teleprompt-verification-${{ github.sha }}
           path: |
             test-results/build-identity.json
+            test-results/native-*.txt
             test-results/packaged.json
             test-results/reviewed-units.json
             coverage/coverage-summary.json

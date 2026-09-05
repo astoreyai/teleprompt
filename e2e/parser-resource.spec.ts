@@ -32,8 +32,12 @@ test(`parser ${scenario.format} ${scenario.mode} waits for its real utility proc
       import { ParserSupervisor } from './src/main/parser/supervisor.ts'
       import { spawnElectronParser } from './src/main/parser/electron-adapter.ts'
       ;(async () => {
+        const phase = (name, details = {}) => console.log('PARSER_PHASE ' + JSON.stringify({ name, at: Date.now(), ...details }))
+        phase('before-ready', { pid: process.pid })
         await app.whenReady()
+        phase('ready')
         const bytes = await readFile(${JSON.stringify(source)})
+        phase('source-read', { bytes: bytes.length })
         const mode = ${JSON.stringify(scenario.mode)}
         const controller = new AbortController()
         let baselinePeakRssKiB = 0
@@ -62,24 +66,29 @@ test(`parser ${scenario.format} ${scenario.mode} waits for its real utility proc
           const metric = app.getAppMetrics().find(item => item.name === 'Teleprompt document parser')
           if (!metric) return
           peakRssKiB = Math.max(peakRssKiB, metric.memory.workingSetSize)
+          if (pid === undefined) phase('worker-observed', { pid: metric.pid })
           pid = metric.pid
           if (mode === 'crash' && !killed) {
             process.kill(pid, 'SIGKILL')
             killed = true
+            phase('worker-killed', { pid })
           }
           if ((mode === 'timeout' || mode === 'cancel') && !stopped) {
             process.kill(pid, 'SIGSTOP')
             stopped = true
+            phase('worker-stopped', { pid })
             if (mode === 'cancel') controller.abort()
           }
         }, 1)
         let error = ''
         let contentLength = 0
         try {
+          phase('parse-start')
           const content = await new ParserSupervisor(() => spawnElectronParser(${JSON.stringify(worker)}, { maxRssBytes }),
             { timeoutMs: mode === 'timeout' ? 500 : 10_000 }).parse(${JSON.stringify(scenario.format)}, bytes, maxOutputChars, controller.signal)
           contentLength = content.length
         } catch (failure) { error = String(failure) }
+        phase('parse-settled', { error })
         clearInterval(monitor)
         let exists = false
         if (pid) {
@@ -100,13 +109,26 @@ test(`parser ${scenario.format} ${scenario.mode} waits for its real utility proc
     let output = ''
     child.stdout.on('data', chunk => { output += String(chunk) })
     child.stderr.on('data', chunk => { output += String(chunk) })
-    const timeout = setTimeout(() => child.kill('SIGKILL'), 15_000)
-    const code = await new Promise<number | null>((done, reject) => {
-      child.once('error', reject)
-      child.once('exit', done)
-    })
-    clearTimeout(timeout)
-    expect(code, output).toBe(0)
+    const launchedAt = Date.now()
+    let watchdogFired = false
+    const timeout = setTimeout(() => {
+      watchdogFired = true
+      child.kill('SIGKILL')
+    }, 15_000)
+    let exit: { code: number | null; signal: NodeJS.Signals | null } | undefined
+    try {
+      exit = await new Promise((done, reject) => {
+        child.once('error', reject)
+        child.once('exit', (code, signal) => done({ code, signal }))
+      })
+    } finally {
+      clearTimeout(timeout)
+      await test.info().attach('native-parser-lifecycle.json', {
+        body: JSON.stringify({ launchedAt, elapsedMs: Date.now() - launchedAt,
+          pid: child.pid, watchdogFired, exit, output }), contentType: 'application/json',
+      })
+    }
+    expect(exit?.code, output).toBe(0)
     const captured = output.match(/^PARSER_PROBE (.+)$/m)
     expect(captured, output).not.toBeNull()
     const result = JSON.parse(captured![1])

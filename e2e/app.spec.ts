@@ -175,6 +175,10 @@ test('packaged surfaces expose read-only playback and deny microphone access', a
     await controls.getByRole('button', { name: 'Pause', exact: true }).click()
     await controls.getByRole('checkbox', { name: 'Mirror vertically', exact: true }).click()
     await expect(controls.getByRole('checkbox', { name: 'Mirror vertically', exact: true })).toBeChecked()
+    await test.info().attach('read-only-before-restart', {
+      body: JSON.stringify({ stage: 'Microphone denied; playback, seek rejection, and mirror setting asserted', at: new Date().toISOString() }),
+      contentType: 'application/json',
+    })
     await stop(application)
     application = await launch(directory)
     controls = await surface(application, 'controls')
@@ -184,6 +188,10 @@ test('packaged surfaces expose read-only playback and deny microphone access', a
     expect(restored.snapshot).toMatchObject({ playing: false, clickerMode: false, drivePresentation: false, mirrorV: true })
     await expect(overlay.locator('.overlay__text')).toContainText(readme.split('\n')[0].replace(/^#+\s*/, ''))
     const crashSession = await controls.context().newCDPSession(controls)
+    await test.info().attach('read-only-before-crash', {
+      body: JSON.stringify({ stage: 'Restarted; persisted document and preferences asserted; sending Page.crash', at: new Date().toISOString() }),
+      contentType: 'application/json',
+    })
     await crashSession.send('Page.crash').catch(() => undefined)
     controls = await recoveredSurface(application, 'controls')
     const afterRecovery = await controls.evaluate(() => window.controlsApi.bootstrap())
