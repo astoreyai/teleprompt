@@ -182,7 +182,7 @@ jobs:
       - name: Build distributable formats
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          npm run package
+          npm run package -- --publish never
           cd release
           sha256sum Teleprompt-*.AppImage teleprompt_*.deb teleprompt-*.tar.gz > SHA256SUMS.txt
 
