@@ -33,7 +33,9 @@ async function reports(target: string) {
 
 async function expectPreserved(target: string, originals: Map<string, Buffer>) {
   expect((await readdir(target)).sort()).toEqual([...originals.keys()].sort())
-  for (const [name, bytes] of originals) expect(await readFile(join(target, name))).toEqual(bytes)
+  for (const [name, bytes] of originals) {
+    expect((await readFile(join(target, name))).equals(bytes), name).toBe(true)
+  }
 }
 
 describe('crash cleanup confinement using actual reports', () => {
@@ -65,9 +67,9 @@ describe('crash cleanup confinement using actual reports', () => {
     await purgeOldCrashArtifacts(root)
     const kept = await readdir(root)
     expect(kept.filter(name => name.endsWith('.json'))).toHaveLength(10)
-    expect(await readFile(join(root, 'icon.png'))).toEqual(await readFile(resolve('build/icon.png')))
+    expect((await readFile(join(root, 'icon.png'))).equals(await readFile(resolve('build/icon.png')))).toBe(true)
     for (const name of kept.filter(name => name.endsWith('.json'))) {
-      expect(await readFile(join(root, name))).toEqual(originals.get(name))
+      expect((await readFile(join(root, name))).equals(originals.get(name)!), name).toBe(true)
     }
   })
 

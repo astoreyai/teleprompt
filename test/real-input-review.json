@@ -12,7 +12,7 @@
     "src/main/files/file-policy.test.ts": "42d7636b6d3b37540872b43e57655d08f9e50404472ff0511bace844b0814ef0",
     "src/main/files/safe-reader.test.ts": "345f5d8c60c0d7684ff28012259a21d4155d7205541572da61efd476e0b28ee9",
     "src/main/lifecycle/crash-race.real.test.ts": "24bf3045d3822e3b2ebc11e3c765ca466996354e90db895a2bf9677fc3e1fcde",
-    "src/main/lifecycle/crash-retention.real.test.ts": "fe0886f53ae68581a51c68ce8bd69add65e050aa509f958f02fe6add8d4b8d53",
+    "src/main/lifecycle/crash-retention.real.test.ts": "ef00359c4b0a2708a31e291b985a2d8d3a0c5b18cb27c9c27c9a0f14ffd795a4",
     "src/main/lifecycle/crash-retention.test.ts": "18f827b5ce9c5c35ae1e445fabc87678079a49a2e5f393b6d9a25903ff4763c5",
     "src/main/lifecycle/recovery-policy.test.ts": "18b0acf0fd06a2b291573355d58738ac8d57889d4e48bc59bc931439847ff3a0",
     "src/main/parser/archive.real.test.ts": "ebae3a6fb330486f727fc1efab0b8503a4b30756b01e013636d5eb775387549c",
