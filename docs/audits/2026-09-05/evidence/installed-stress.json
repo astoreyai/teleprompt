@@ -1,0 +1,77 @@
+{
+  "inputs": [
+    {
+      "name": "typescript.js",
+      "length": 9112572,
+      "bannerLength": 8059424,
+      "bytes": 9112572,
+      "mtime": "2026-07-19T03:36:09.038Z",
+      "sha256": "3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675"
+    },
+    {
+      "name": "typescript.d.ts",
+      "length": 588085,
+      "bannerLength": 485025,
+      "bytes": 588085,
+      "mtime": "2026-07-19T03:36:09.102Z",
+      "sha256": "e134052a6b1ded61693b4037f615dc72f14e2881e79c1ddbff6c514c8a516b05"
+    },
+    {
+      "name": "README.md",
+      "length": 6201,
+      "bannerLength": 6150,
+      "bytes": 6203,
+      "mtime": "2026-09-05T03:19:12.221Z",
+      "sha256": "ad44940a471bf9cc5e3c7be092092cbf90f649cb96a47084bf9ad38e403f351c"
+    },
+    {
+      "name": "SECURITY.md",
+      "length": 4508,
+      "bannerLength": 4493,
+      "bytes": 4508,
+      "mtime": "2026-09-05T03:19:12.221Z",
+      "sha256": "9a29063e3e8ea204c01b51abbb45174f997faa45648cd85c0d8835e862cd61c1"
+    }
+  ],
+  "requestedDurationMs": 300000,
+  "appAsarSha256": "e3a10695a7a455b9b5a8fc041075d00962224ecfc2b476d9ba536a43e0c8843b",
+  "inputMethod": "Actual CLI file import, selection, reload, settings and playback through installed preload APIs",
+  "memoryMethod": "/proc/PID/smaps_rollup; descendants from every task/*/children",
+  "traceRecording": "off",
+  "runtime": {
+    "appVersion": "1.1.0",
+    "electronVersion": "43.1.1",
+    "nodeVersion": "24.18.0"
+  },
+  "importBurst": {
+    "admitted": 18,
+    "refused": 6
+  },
+  "iterations": 173,
+  "contentHash": "3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675",
+  "sourceFilesUnchanged": true,
+  "restoredSelectionAndSettings": true,
+  "passed": true,
+  "elapsedMs": 305482,
+  "iterationLatencyMs": {
+    "count": 173,
+    "median": 204.40532599997823,
+    "p95": 4635.976176000026,
+    "max": 6294.017255999992
+  },
+  "selectionLatencyMs": {
+    "count": 173,
+    "median": 37.375900999992155,
+    "p95": 558.4096259999933,
+    "max": 790.5726830000058
+  },
+  "processTreeMemory": {
+    "peakRssBytes": 2360524800,
+    "peakPssBytes": 1781383168,
+    "peakPrivateBytes": 1599811584,
+    "sampleCount": 584,
+    "last60SecondsMedianPrivateBytes": 802351104.0
+  },
+  "rawReportSha256": "fccb1081a0d0fa0459888d67722aa2a52e1008546251cbcd8042e2091c420bba",
+  "comparisonLimit": "This installed run is not identically matched to the old-release comparison because README.md and SECURITY.md changed between runs."
+}

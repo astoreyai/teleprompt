@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, readlink } from 'node:fs/promises'
 
 export type ProcessMemory = { pid: number; rssBytes: number; pssBytes: number; privateBytes: number }
 
@@ -34,4 +34,40 @@ export async function processTreeMemory(pid: number): Promise<ProcessMemory[]> {
     }
   }
   return visit(pid)
+}
+
+export async function observeRendererSandboxes(pid: number) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const mainUserNamespace = await readlink(`/proc/${pid}/ns/user`)
+      const mainPidNamespace = await readlink(`/proc/${pid}/ns/pid`)
+      const processes = await processTreeMemory(pid)
+      const renderers = await Promise.all(processes.map(async ({ pid: childPid }) => {
+        const directory = `/proc/${childPid}`
+        // Chromium may rewrite argv into one space-separated process title.
+        const command = await readFile(`${directory}/cmdline`, 'utf8')
+        if (!/(?:^|[\0 ])--type=renderer(?:[\0 ]|$)/.test(command)) return null
+        const [status, userNamespace, pidNamespace] = await Promise.all([
+          readFile(`${directory}/status`, 'utf8'),
+          readlink(`${directory}/ns/user`),
+          readlink(`${directory}/ns/pid`),
+        ])
+        const field = (name: string) => {
+          const value = status.match(new RegExp(`^${name}:\\s+(\\d+)`, 'm'))
+          if (!value) throw new Error(`Missing ${name} in renderer ${childPid} status`)
+          return Number(value[1])
+        }
+        return { pid: childPid,
+          role: command.match(/(?:^|[\0 ])--teleprompt-surface=(controls|overlay)(?:[\0 ]|$)/)?.[1],
+          seccomp: field('Seccomp'), noNewPrivs: field('NoNewPrivs'), userNamespace, pidNamespace,
+          separateUserNamespace: userNamespace !== mainUserNamespace,
+          separatePidNamespace: pidNamespace !== mainPidNamespace }
+      }))
+      return { mainUserNamespace, mainPidNamespace, renderers: renderers.filter(renderer => renderer !== null) }
+    } catch (error) {
+      // Enumerate the real tree again if a native child exited during observation.
+      // Permission failures remain fatal; they must never erase a sandboxed process.
+      if (attempt >= 2 || !['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+    }
+  }
 }

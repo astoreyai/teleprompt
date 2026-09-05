@@ -23,7 +23,6 @@ jobs:
       TELEPROMPT_REAL_LEGACY_PROFILE: test/fixtures/public/legacy-1.0.3
       TELEPROMPT_REAL_LEGACY_STATE: test/fixtures/public/legacy-0.1.0/teleprompt-state.json
       TELEPROMPT_E2E_EXECUTABLE: release/linux-unpacked/teleprompt
-      CHROME_DEVEL_SANDBOX: '${{ github.workspace }}/release/linux-unpacked/chrome-sandbox'
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -45,6 +44,11 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Provision locked Electron runtime
+        run: |
+          node node_modules/electron/install.js
+          node -p 'require("electron")'
+
       - name: Audit dependencies
         run: npm audit --audit-level=high
 
@@ -54,11 +58,40 @@ jobs:
       - name: Build and verify packaged app
         run: npm run package:dir
 
-      - name: Configure Chromium sandbox helper
+      - name: Configure per-executable Chromium namespace sandbox
         run: |
-          sudo chown root:root release/linux-unpacked/chrome-sandbox
-          sudo chmod 4755 release/linux-unpacked/chrome-sandbox
-          test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
+          packaged_executable="$(realpath release/linux-unpacked/teleprompt)"
+          development_executable="$(node -p 'require("electron")')"
+          # Permit user namespaces only for the two tested executables. Keep the
+          # runner-wide AppArmor restriction and Chromium seccomp sandbox enabled.
+          # https://ubuntu.com/blog/ubuntu-23-10-restricted-unprivileged-user-namespaces
+          cat > "$RUNNER_TEMP/teleprompt-ci.apparmor" <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile teleprompt-ci-packaged "$packaged_executable" flags=(unconfined) {
+            userns,
+          }
+          profile teleprompt-ci-development "$development_executable" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r "$RUNNER_TEMP/teleprompt-ci.apparmor"
+          test "$(stat -c '%a' release/linux-unpacked/chrome-sandbox)" = "755"
+          test "$(stat -c '%a' "$(dirname "$development_executable")/chrome-sandbox")" = "755"
+
+      - name: Record verified build identity
+        run: |
+          mkdir -p test-results
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises'
+          import { createHash } from 'node:crypto'
+          const asar = await readFile('release/linux-unpacked/resources/app.asar')
+          await writeFile('test-results/build-identity.json', JSON.stringify({
+            commit: process.env.GITHUB_SHA,
+            asarSha256: createHash('sha256').update(asar).digest('hex'),
+            asarBytes: asar.length,
+          }, null, 2) + '\n')
+          NODE
 
       - name: Packaged runtime and native crash capture
         env:
@@ -99,6 +132,7 @@ jobs:
         with:
           name: teleprompt-verification-${{ github.sha }}
           path: |
+            test-results/build-identity.json
             test-results/packaged.json
             test-results/reviewed-units.json
             coverage/coverage-summary.json

@@ -4,7 +4,7 @@ import { copyFile, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { launch, surface, stop } from './harness.js'
-import { processTreeMemory } from './process-memory.js'
+import { observeRendererSandboxes, processTreeMemory } from './process-memory.js'
 
 for (const restart of [false, true]) {
   test(`large-to-small ${restart ? 'restored' : 'new'} file selections release unused memory and preserve source bytes`, async () => {
@@ -46,12 +46,18 @@ for (const restart of [false, true]) {
         measured = processes.reduce((sum, process) => sum + process.privateBytes, 0)
         return measured
       }, { timeout: 15_000, message: 'private memory falls below 512 MiB after leaving the 9 MB file' }).toBeLessThan(512 * 1024 * 1024)
+      const sandboxes = await observeRendererSandboxes(app.process.pid!)
+      expect(sandboxes.renderers.map(renderer => renderer.role).sort()).toEqual(['controls', 'overlay'])
+      for (const renderer of sandboxes.renderers) {
+        expect(renderer).toMatchObject({ seccomp: 2, noNewPrivs: 1,
+          separateUserNamespace: true, separatePidNamespace: true })
+      }
       for (const input of inputs) {
         expect(createHash('sha256').update(await readFile(input.path)).digest('hex')).toBe(input.sha256)
         expect(createHash('sha256').update(await readFile(input.original)).digest('hex')).toBe(input.sha256)
       }
       await test.info().attach('selection-memory', { contentType: 'application/json', body: JSON.stringify({
-        restart, privateBytesAfterSmallSelection: measured,
+        restart, privateBytesAfterSmallSelection: measured, sandboxes,
         inputs: inputs.map(({ original, path, ...provenance }) => provenance),
       }) })
       await stop(app)

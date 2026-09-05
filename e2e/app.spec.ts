@@ -134,14 +134,26 @@ test('packaged surfaces expose read-only playback and deny microphone access', a
     await expect(controls.locator('textarea, [contenteditable="true"]')).toHaveCount(0)
     await expect(controls.getByRole('button', { name: /^(New blank script|Save|Save As…|Paste|Revoke microphone consent)$/ })).toHaveCount(0)
     await expect(controls.getByRole('checkbox', { name: /Show live editor|Listen and auto-advance/ })).toHaveCount(0)
-    const permission = await controls.evaluate(async () => {
+    const microphone = await controls.evaluate(async () => {
+      const permission = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+      const exposedAudioInputs = (await navigator.mediaDevices.enumerateDevices())
+        .filter((device) => device.kind === 'audioinput').length
+      let capture: string
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
         for (const track of stream.getTracks()) track.stop()
-        return 'granted'
-      } catch (error) { return error instanceof DOMException ? error.name : String(error) }
+        capture = 'granted'
+      } catch (error) { capture = error instanceof DOMException ? error.name : String(error) }
+      return { permission: permission.state, exposedAudioInputs, capture }
     })
-    expect(permission).toBe('NotAllowedError')
+    await test.info().attach('microphone-permission', {
+      body: JSON.stringify(microphone), contentType: 'application/json',
+    })
+    expect(microphone.permission).toBe('denied')
+    // Chromium may report unavailable input before reaching the request handler.
+    // Zero exposed devices does not establish whether physical hardware exists.
+    expect(microphone.capture === 'NotAllowedError'
+      || (microphone.capture === 'NotFoundError' && microphone.exposedAudioInputs === 0)).toBe(true)
     const bootstrap = await controls.evaluate(() => window.controlsApi.bootstrap())
     for (const removed of ['editMode', 'voicePacing', 'voiceConsent', 'voiceStatus', 'voiceError']) {
       expect(bootstrap.snapshot).not.toHaveProperty(removed)

@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test'
 import { build } from 'esbuild'
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { resolve, join } from 'node:path'
 
 // This probe runs the real production supervisor, adapter, and worker inside
@@ -92,7 +93,9 @@ test(`parser ${scenario.format} ${scenario.mode} waits for its real utility proc
     ` }, outfile: runner, bundle: true, platform: 'node', format: 'cjs', packages: 'external' })
     const environment: NodeJS.ProcessEnv = { ...process.env, XDG_CONFIG_HOME: join(directory, 'profile') }
     delete environment.ELECTRON_RUN_AS_NODE
-    const child = spawn(resolve('node_modules/electron/dist/electron'), [runner],
+    // Electron 43 installs its development runtime lazily through this supported entrypoint.
+    const electronExecutable = createRequire(import.meta.url)('electron') as string
+    const child = spawn(electronExecutable, [runner],
       { env: environment, stdio: ['ignore', 'pipe', 'pipe'] })
     let output = ''
     child.stdout.on('data', chunk => { output += String(chunk) })
