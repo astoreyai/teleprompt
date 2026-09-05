@@ -1,5 +1,7 @@
 # Implementation status — 2026-09-04
 
+Subsequent 1.0.3 work is recorded in [RETENTION_HARDENING.md](RETENTION_HARDENING.md): startup symlink-root deletion fixed, diagnostic tests converted, reviewed subset expanded to 89 tests, and eight unreviewed suites remaining. The counts below preserve the earlier implementation checkpoint.
+
 Baseline commit: `984b52b5acf2c5042a0dbe70b359d6f38dc6c981`. This records the implementation gate before the subsequent push/deploy/install instruction. See [RELEASE_1.0.1.md](RELEASE_1.0.1.md) for the later installation and stress qualification. Existing unrelated `.gitignore`, `.claude/`, `.ignore`, and `.mcp.json` changes were left alone.
 
 ## Confirmed implementation

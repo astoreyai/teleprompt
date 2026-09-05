@@ -1,0 +1,20 @@
+[
+  {
+    "command": "npm run test",
+    "exitCode": 1,
+    "stdout": "\n> teleprompt@1.0.3 test\n> node scripts/check-release-qualification.mjs && vitest run\n\n",
+    "stderr": "Full release qualification is blocked by 8 unreviewed real-input suites:\nsrc/main/documents/save-service.test.ts\nsrc/main/lifecycle/crash-retention.test.ts\nsrc/main/parser/parser-core.test.ts\nsrc/main/parser/supervisor.test.ts\nsrc/main/persistence/schema.test.ts\nsrc/main/presentation.test.ts\nsrc/shared/cues.test.ts\nsrc/shared/text.test.ts\nThe review manifest must record actual reviewed and executed suite hashes; it cannot certify missing corpus or unexecuted tests.\n"
+  },
+  {
+    "command": "npm run test:watch",
+    "exitCode": 1,
+    "stdout": "\n> teleprompt@1.0.3 test:watch\n> node scripts/check-release-qualification.mjs && vitest\n\n",
+    "stderr": "Full release qualification is blocked by 8 unreviewed real-input suites:\nsrc/main/documents/save-service.test.ts\nsrc/main/lifecycle/crash-retention.test.ts\nsrc/main/parser/parser-core.test.ts\nsrc/main/parser/supervisor.test.ts\nsrc/main/persistence/schema.test.ts\nsrc/main/presentation.test.ts\nsrc/shared/cues.test.ts\nsrc/shared/text.test.ts\nThe review manifest must record actual reviewed and executed suite hashes; it cannot certify missing corpus or unexecuted tests.\n"
+  },
+  {
+    "command": "npm run test:coverage",
+    "exitCode": 1,
+    "stdout": "\n> teleprompt@1.0.3 test:coverage\n> node scripts/check-release-qualification.mjs && vitest run --coverage\n\n",
+    "stderr": "Full release qualification is blocked by 8 unreviewed real-input suites:\nsrc/main/documents/save-service.test.ts\nsrc/main/lifecycle/crash-retention.test.ts\nsrc/main/parser/parser-core.test.ts\nsrc/main/parser/supervisor.test.ts\nsrc/main/persistence/schema.test.ts\nsrc/main/presentation.test.ts\nsrc/shared/cues.test.ts\nsrc/shared/text.test.ts\nThe review manifest must record actual reviewed and executed suite hashes; it cannot certify missing corpus or unexecuted tests.\n"
+  }
+]

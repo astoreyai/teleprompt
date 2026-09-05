@@ -21,27 +21,27 @@ Every listed artifact must report `OK`. Do not install a package from a bundle w
 ## AppImage
 
 ```bash
-chmod +x Teleprompt-1.0.0-x86_64.AppImage
-./Teleprompt-1.0.0-x86_64.AppImage
+chmod +x Teleprompt-1.0.3-x86_64.AppImage
+./Teleprompt-1.0.3-x86_64.AppImage
 ```
 
 If FUSE is unavailable:
 
 ```bash
-./Teleprompt-1.0.0-x86_64.AppImage --appimage-extract-and-run
+./Teleprompt-1.0.3-x86_64.AppImage --appimage-extract-and-run
 ```
 
 ## Debian package
 
 ```bash
-sudo apt install ./teleprompt_1.0.0_amd64.deb
+sudo apt install ./teleprompt_1.0.3_amd64.deb
 teleprompt
 ```
 
 To replace an existing installation with the same build, use:
 
 ```bash
-sudo apt install --reinstall ./teleprompt_1.0.0_amd64.deb
+sudo apt install --reinstall ./teleprompt_1.0.3_amd64.deb
 ```
 
 Confirm the installed package and verify its managed files:
@@ -57,16 +57,16 @@ No output from `dpkg -V` means the package-managed files match their recorded me
 
 Close Teleprompt before replacing the package. A 0.1.x workspace is migrated on first 1.0 launch while the legacy metadata remains available. Back up `~/.config/teleprompt/` before a major upgrade if it contains irreplaceable drafts.
 
-Downgrading after 1.0 has written schema-v2 state is not supported. Restore a pre-upgrade user-data backup if an application rollback is required.
+Downgrading to a pre-1.0 release after schema-v2 state has been written is not supported. Releases 1.0.2 and 1.0.3 share schema v2; reinstalling the saved 1.0.2 package restores its previous behavior, including its crash-cleanup defect. Restore a pre-upgrade user-data backup when returning to a pre-1.0 release.
 
 ## Tar archive
 
 ```bash
-tar -xzf teleprompt-1.0.0.tar.gz
-./teleprompt-1.0.0/teleprompt
+tar -xzf teleprompt-1.0.3.tar.gz
+./teleprompt-1.0.3/teleprompt
 ```
 
-Confirm the exact directory name with `tar -tzf teleprompt-1.0.0.tar.gz | head` because archive naming can vary by builder version.
+Confirm the exact directory name with `tar -tzf teleprompt-1.0.3.tar.gz | head` because archive naming can vary by builder version.
 
 ## Build from source
 
@@ -79,6 +79,8 @@ npm ci
 npm run check:release
 npm run package
 ```
+
+Full unit and coverage commands currently stop at the real-input qualification guard while eight suites await conversion. To run the reviewed subset, set `TELEPROMPT_REAL_DOCX` and `TELEPROMPT_REAL_PDF` to genuine local files and run `npm run test:real`. See [the qualification record](docs/audits/2026-09-04/RETENTION_HARDENING.md) for the remaining work.
 
 Artifacts are written to `release/`. To build one format, use `npm run package:appimage` or `npm run package:deb`.
 

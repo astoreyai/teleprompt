@@ -1,0 +1,67 @@
+{
+  "baselineReviewedUnits": {
+    "passed": 80,
+    "failed": 0,
+    "pending": 0,
+    "failedNames": []
+  },
+  "focusedBefore": {
+    "passed": 8,
+    "failed": 1,
+    "pending": 0,
+    "failedNames": [
+      "crash cleanup confinement using actual reports does not follow a symlink supplied as the cleanup root"
+    ]
+  },
+  "focusedAfter": {
+    "passed": 9,
+    "failed": 0,
+    "pending": 0,
+    "failedNames": []
+  },
+  "finalReviewedUnits": {
+    "passed": 89,
+    "failed": 0,
+    "pending": 0,
+    "failedNames": []
+  },
+  "packagedRuntime": {
+    "startTime": "2026-09-05T00:10:18.435Z",
+    "duration": 95973.837,
+    "expected": 22,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "installedRuntime": {
+    "startTime": "2026-09-05T00:14:40.537Z",
+    "duration": 97557.43900000001,
+    "expected": 22,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "extractedAppImageRuntime": {
+    "startTime": "2026-09-05T00:17:01.771Z",
+    "duration": 45900.992000000006,
+    "expected": 11,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "installedStressSmoke": {
+    "passed": true,
+    "iterations": 10,
+    "requestedDurationMs": 10000,
+    "elapsedMs": 18458,
+    "appAsarSha256": "fb906c12941a6c0ee377fd6da774f4196b677b62f877c1ece0c23225450ac42e"
+  },
+  "fullQualification": {
+    "exitCode": 1,
+    "output": "Full release qualification is blocked by 8 unreviewed real-input suites:\nsrc/main/documents/save-service.test.ts\nsrc/main/lifecycle/crash-retention.test.ts\nsrc/main/parser/parser-core.test.ts\nsrc/main/parser/supervisor.test.ts\nsrc/main/persistence/schema.test.ts\nsrc/main/presentation.test.ts\nsrc/shared/cues.test.ts\nsrc/shared/text.test.ts\nThe review manifest must record actual reviewed and executed suite hashes; it cannot certify missing corpus or unexecuted tests.\n"
+  },
+  "typecheckExitCode": 0,
+  "dependencyAuditVulnerabilities": 0,
+  "dpkgVerificationExitCode": 0,
+  "diagnosticFixtureSha256": "7cc80afe49ba3efbb62775bb69db3819cf557df17fdb71735daec661c87dad59"
+}

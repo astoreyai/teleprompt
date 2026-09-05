@@ -10,6 +10,8 @@ const suites = [
   'src/main/domain/workspace.test.ts',
   'src/main/persistence/repositories.test.ts',
   'src/main/documents/import-service.test.ts',
+  'src/main/diagnostic-log.test.ts',
+  'src/main/lifecycle/crash-retention.real.test.ts',
   'src/main/lifecycle/recovery-policy.test.ts',
   'src/main/parser/core.real.test.ts',
   'src/main/parser/archive.real.test.ts',
@@ -25,6 +27,7 @@ const suites = [
   'src/renderer/src/shared/voice.test.ts',
 ]
 const paths = ['README.md', 'SECURITY.md', 'src/renderer/controls.html', 'build/icon.png',
+  'test/fixtures/github-checkout-token.log',
   'node_modules/typescript/lib/typescript.d.ts', process.env.TELEPROMPT_REAL_DOCX, process.env.TELEPROMPT_REAL_PDF].filter(Boolean)
 const provenance = await Promise.all(paths.map(async (path) => {
   const [bytes, info] = await Promise.all([readFile(path), stat(path)])
@@ -37,7 +40,7 @@ if (evidenceDirectory) {
   await writeFile(resolve(evidenceDirectory, 'real-input-provenance.json'), JSON.stringify({ provenance, suites }, null, 2) + '\n')
 }
 process.stdout.write('Running the reviewed real-input subset. This is not full release qualification.\n')
-process.stdout.write('Legacy schema, cue/text, parser-worker, save-service, diagnostic and presentation suites still require conversion; see IMPLEMENTATION_STATUS.md.\n')
+process.stdout.write('Run scripts/check-release-qualification.mjs for the remaining unreviewed suites; see IMPLEMENTATION_STATUS.md for corpus and coverage limitations.\n')
 if (!process.env.TELEPROMPT_REAL_DOCX || !process.env.TELEPROMPT_REAL_PDF) {
   process.stderr.write('Real DOCX/PDF corpus is missing. Set TELEPROMPT_REAL_DOCX and TELEPROMPT_REAL_PDF; refusing a silently skipped format gate.\n')
   process.exit(2)

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.3 — 2026-09-04
+
+- Refuse symlink directory roots during startup crash-artifact cleanup, preventing the reproduced deletion of unrelated JSON files.
+- Replace fabricated diagnostic inputs with a captured public GitHub log line and actual filesystem checks; record fixture provenance.
+- Enforce real-input qualification before local test, watch, and coverage commands.
+- Add real-report cleanup and installed-startup regression coverage. The reviewed subset expands from 80 to 89 tests; eight legacy suites still require real-input qualification.
+
 ## 1.0.2 — 2026-09-04
 
 - Release unused renderer resources after large-to-small document transitions, including restored documents, while preserving native Undo/Redo.

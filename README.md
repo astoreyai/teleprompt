@@ -10,7 +10,7 @@ Download an AppImage, Debian package, or tar archive together with `SHA256SUMS.t
 
 ```bash
 sha256sum --check SHA256SUMS.txt
-sudo apt install ./teleprompt_1.0.0_amd64.deb
+sudo apt install ./teleprompt_1.0.3_amd64.deb
 ```
 
 See [INSTALL.md](INSTALL.md) for portable formats, upgrades, local data, platform constraints, and troubleshooting.

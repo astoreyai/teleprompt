@@ -1,5 +1,5 @@
 {
-  "method": "Source review and executed real-input suite; 80 passing tests in 19 files, 2026-09-04. Missing files are not certified.",
+  "method": "Source review and executed real-input suite; 89 passing tests in 21 files, 2026-09-04. Missing files are not certified. The diagnostic fixture is a verbatim public GitHub log line, already credential-masked at its source.",
   "files": {
     "src/main/application/app-store.test.ts": "a299ac0b1cc11756466a63553ae686cf831a860629539efe2457489d086e8996",
     "src/main/application/app-store.real.test.ts": "0e2cee12743664aaa424e2cacc87c7b72f2e28a2c308150d1e9ba072a4b43da2",
@@ -19,6 +19,8 @@
     "src/main/platform/overlay-projection.test.ts": "a18bb9d06645ab2b309e679c16459f4d4e313786b59b3d4c01c1d9f268cfec6d",
     "src/renderer/src/shared/checkpoint-gate.test.ts": "9249d41e5985199db2525b27b9639d022ea0d06246db1d2374d771745033ce79",
     "src/renderer/src/shared/render-policy.test.ts": "b6a95995b4c2b04534a871761d3ee130aa516aba99dba2e9364114e70471be1e",
-    "src/renderer/src/shared/voice.test.ts": "56e05e7111ab956fa26d9ae650c9b28f3518541c21f23747226279f2a5ed83d2"
+    "src/renderer/src/shared/voice.test.ts": "56e05e7111ab956fa26d9ae650c9b28f3518541c21f23747226279f2a5ed83d2",
+    "src/main/diagnostic-log.test.ts": "8ee167a4d481bf61588cec2282753a4e78b78c36698b3adee77369348cbcc98e",
+    "src/main/lifecycle/crash-retention.real.test.ts": "fe0886f53ae68581a51c68ce8bd69add65e050aa509f958f02fe6add8d4b8d53"
   }
 }

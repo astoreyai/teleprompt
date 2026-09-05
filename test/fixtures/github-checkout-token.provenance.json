@@ -1,0 +1,10 @@
+{
+  "source": "https://github.com/astoreyai/teleprompt/actions/runs/33928836003",
+  "command": "gh run view 33928836003 --log",
+  "selection": "First complete checkout log line ending in token: ***; copied verbatim, including tabs and newline.",
+  "sourceCommit": "4aedd8abc291f894515ea570a68cd70fa986ceae",
+  "capturedAt": "2026-09-05T00:00:12.694796+00:00",
+  "bytes": 69,
+  "sha256": "7cc80afe49ba3efbb62775bb69db3819cf557df17fdb71735daec661c87dad59",
+  "limitation": "GitHub already masked the genuine credential before publishing its log. This fixture contains no live secret and does not qualify detection of every credential syntax."
+}

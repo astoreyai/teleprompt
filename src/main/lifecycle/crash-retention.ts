@@ -1,4 +1,4 @@
-import { readdir, stat, unlink } from 'node:fs/promises'
+import { lstat, readdir, stat, unlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 export type CrashRetentionOptions = {
@@ -24,6 +24,8 @@ export async function purgeOldCrashArtifacts(
     if (depth > maxDepth) return
     let entries
     try {
+      // Refuse directory links, including the caller-supplied root.
+      if (!(await lstat(path)).isDirectory()) return
       entries = await readdir(path, { withFileTypes: true })
     } catch {
       return
