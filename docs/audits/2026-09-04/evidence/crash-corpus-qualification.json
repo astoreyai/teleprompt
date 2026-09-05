@@ -1,0 +1,79 @@
+{
+  "baselineCommit": "57458f23f7936fe9803fa596b42bead7eb1066bf",
+  "baselineReviewedUnits": {
+    "passed": 89,
+    "failed": 0,
+    "pending": 0,
+    "failedNames": []
+  },
+  "focusedRetention": {
+    "passed": 7,
+    "failed": 0,
+    "pending": 0,
+    "failedNames": []
+  },
+  "finalReviewedUnits": {
+    "passed": 92,
+    "failed": 0,
+    "pending": 0,
+    "failedNames": []
+  },
+  "previousInstalledRuntime": {
+    "startTime": "2026-09-05T00:14:40.537Z",
+    "duration": 97557.43900000001,
+    "expected": 22,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "installedRuntime": {
+    "startTime": "2026-09-05T00:42:06.236Z",
+    "duration": 95725.53,
+    "expected": 22,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "runtimeRetries": 0,
+  "capturedNativeCorpora": [
+    {
+      "origin": "packaged controls recovery stops after three replacements",
+      "capturedAt": "2026-09-05T00:42:21.645Z",
+      "artifacts": 8,
+      "applicationSha256": "fb906c12941a6c0ee377fd6da774f4196b677b62f877c1ece0c23225450ac42e",
+      "inputSha256": "e021087b084d55f7b0ec0d61b001d3e3fd4284521f740361e97ae023633af8af",
+      "directoryMode": "0o700"
+    },
+    {
+      "origin": "packaged controls recovery stops after three replacements",
+      "capturedAt": "2026-09-05T00:43:08.539Z",
+      "artifacts": 8,
+      "applicationSha256": "fb906c12941a6c0ee377fd6da774f4196b677b62f877c1ece0c23225450ac42e",
+      "inputSha256": "e021087b084d55f7b0ec0d61b001d3e3fd4284521f740361e97ae023633af8af",
+      "directoryMode": "0o700"
+    },
+    {
+      "origin": "packaged overlay recovery stops after three replacements",
+      "capturedAt": "2026-09-05T00:42:32.562Z",
+      "artifacts": 8,
+      "applicationSha256": "fb906c12941a6c0ee377fd6da774f4196b677b62f877c1ece0c23225450ac42e",
+      "inputSha256": "e021087b084d55f7b0ec0d61b001d3e3fd4284521f740361e97ae023633af8af",
+      "directoryMode": "0o700"
+    },
+    {
+      "origin": "packaged overlay recovery stops after three replacements",
+      "capturedAt": "2026-09-05T00:43:20.230Z",
+      "artifacts": 8,
+      "applicationSha256": "fb906c12941a6c0ee377fd6da774f4196b677b62f877c1ece0c23225450ac42e",
+      "inputSha256": "e021087b084d55f7b0ec0d61b001d3e3fd4284521f740361e97ae023633af8af",
+      "directoryMode": "0o700"
+    }
+  ],
+  "fullQualification": {
+    "exitCode": 1,
+    "output": "Full release qualification is blocked by 7 unreviewed real-input suites:\nsrc/main/documents/save-service.test.ts\nsrc/main/parser/parser-core.test.ts\nsrc/main/parser/supervisor.test.ts\nsrc/main/persistence/schema.test.ts\nsrc/main/presentation.test.ts\nsrc/shared/cues.test.ts\nsrc/shared/text.test.ts\nThe review manifest must record actual reviewed and executed suite hashes; it cannot certify missing corpus or unexecuted tests.\n"
+  },
+  "typecheckExitCode": 0,
+  "missingCrashCorpusExitCode": 2,
+  "runtimeChanges": false
+}

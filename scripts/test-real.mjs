@@ -12,6 +12,7 @@ const suites = [
   'src/main/documents/import-service.test.ts',
   'src/main/diagnostic-log.test.ts',
   'src/main/lifecycle/crash-retention.real.test.ts',
+  'src/main/lifecycle/crash-retention.test.ts',
   'src/main/lifecycle/recovery-policy.test.ts',
   'src/main/parser/core.real.test.ts',
   'src/main/parser/archive.real.test.ts',
@@ -29,6 +30,14 @@ const suites = [
 const paths = ['README.md', 'SECURITY.md', 'src/renderer/controls.html', 'build/icon.png',
   'test/fixtures/github-checkout-token.log',
   'node_modules/typescript/lib/typescript.d.ts', process.env.TELEPROMPT_REAL_DOCX, process.env.TELEPROMPT_REAL_PDF].filter(Boolean)
+if (process.env.TELEPROMPT_REAL_CRASH_CORPUS) {
+  const manifest = resolve(process.env.TELEPROMPT_REAL_CRASH_CORPUS, 'provenance.json')
+  paths.push(manifest)
+  const captured = JSON.parse(await readFile(manifest, 'utf8'))
+  for (const artifact of captured.artifacts) {
+    paths.push(resolve(process.env.TELEPROMPT_REAL_CRASH_CORPUS, artifact.name))
+  }
+}
 const provenance = await Promise.all(paths.map(async (path) => {
   const [bytes, info] = await Promise.all([readFile(path), stat(path)])
   return { path: resolve(path), bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -41,8 +50,8 @@ if (evidenceDirectory) {
 }
 process.stdout.write('Running the reviewed real-input subset. This is not full release qualification.\n')
 process.stdout.write('Run scripts/check-release-qualification.mjs for the remaining unreviewed suites; see IMPLEMENTATION_STATUS.md for corpus and coverage limitations.\n')
-if (!process.env.TELEPROMPT_REAL_DOCX || !process.env.TELEPROMPT_REAL_PDF) {
-  process.stderr.write('Real DOCX/PDF corpus is missing. Set TELEPROMPT_REAL_DOCX and TELEPROMPT_REAL_PDF; refusing a silently skipped format gate.\n')
+if (!process.env.TELEPROMPT_REAL_DOCX || !process.env.TELEPROMPT_REAL_PDF || !process.env.TELEPROMPT_REAL_CRASH_CORPUS) {
+  process.stderr.write('Set TELEPROMPT_REAL_DOCX, TELEPROMPT_REAL_PDF, and TELEPROMPT_REAL_CRASH_CORPUS to genuine local inputs; refusing an incomplete qualification subset.\n')
   process.exit(2)
 }
 const child = spawnSync(resolve('node_modules/.bin/vitest'), ['run', ...suites, ...process.argv.slice(2)], { stdio: 'inherit' })

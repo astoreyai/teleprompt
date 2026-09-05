@@ -1,58 +1,82 @@
-import { mkdir, mkdtemp, stat, utimes, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { purgeOldCrashArtifacts } from './crash-retention.js'
 
-const created: string[] = []
+// Capture provenance and unmodified native Crashpad files with the packaged
+// recovery-budget test. Process-memory artifacts remain in local test output.
+const corpus = process.env.TELEPROMPT_REAL_CRASH_CORPUS
+if (!corpus) throw new Error('Set TELEPROMPT_REAL_CRASH_CORPUS to a native recovery test crash-corpus directory')
+const provenance = JSON.parse(await readFile(join(corpus, 'provenance.json'), 'utf8')) as {
+  artifacts: Array<{ name: string; bytes: number; sha256: string }>
+}
+async function artifact(extension: '.dmp' | '.meta') {
+  const entry = provenance.artifacts.find(file => file.name.endsWith(extension))
+  if (!entry || basename(entry.name) !== entry.name) throw new Error(`Missing native ${extension} artifact`)
+  const path = join(corpus!, entry.name)
+  const bytes = await readFile(path)
+  expect(bytes.length).toBe(entry.bytes)
+  expect(createHash('sha256').update(bytes).digest('hex')).toBe(entry.sha256)
+  return { path, name: entry.name, bytes }
+}
 
+const created: string[] = []
+async function directory() {
+  const root = await mkdtemp(join(tmpdir(), 'teleprompt-crashes-'))
+  created.push(root)
+  return root
+}
 afterEach(async () => {
-  const { rm } = await import('node:fs/promises')
-  await Promise.all(created.splice(0).map((path) => rm(path, { recursive: true, force: true })))
+  await Promise.all(created.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
 
-describe('crash artifact retention', () => {
-  it('purges old Crashpad dumps and metadata sidecars while preserving unrelated files', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'teleprompt-crashes-'))
-    created.push(directory)
-    await mkdir(join(directory, 'pending'))
-    const oldDump = join(directory, 'pending', 'old.dmp')
-    const oldMeta = join(directory, 'pending', 'old.meta')
-    const unrelated = join(directory, 'pending', 'keep.bin')
-    await Promise.all([
-      writeFile(oldDump, 'dump'),
-      writeFile(oldMeta, 'metadata'),
-      writeFile(unrelated, 'unrelated'),
-    ])
-    const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000)
-    await Promise.all([utimes(oldDump, old, old), utimes(oldMeta, old, old), utimes(unrelated, old, old)])
-
-    await purgeOldCrashArtifacts(directory, { now: Date.now(), maxAgeMs: 7 * 24 * 60 * 60 * 1000 })
-
-    await expect(stat(oldDump)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(stat(oldMeta)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(stat(unrelated)).resolves.toBeDefined()
+describe('retention with genuine native Crashpad artifacts', () => {
+  it('purges elapsed dumps and metadata while preserving the actual application icon', async () => {
+    const root = await directory()
+    const pending = join(root, 'pending')
+    await mkdir(pending)
+    const dump = await artifact('.dmp')
+    const meta = await artifact('.meta')
+    const dumpPath = join(pending, dump.name)
+    const metaPath = join(pending, meta.name)
+    const icon = join(pending, 'icon.png')
+    await Promise.all([copyFile(dump.path, dumpPath), copyFile(meta.path, metaPath), copyFile('build/icon.png', icon)])
+    // Exercise age expiry using elapsed wall time and a zero-age policy. Neither
+    // source dates nor file contents are manufactured or changed.
+    await new Promise(resolve => setTimeout(resolve, 25))
+    expect(Date.now()).toBeGreaterThan(Math.max((await stat(dumpPath)).mtimeMs, (await stat(metaPath)).mtimeMs))
+    await purgeOldCrashArtifacts(root, { maxAgeMs: 0 })
+    await expect(stat(dumpPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(metaPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(icon)).toEqual(await readFile('build/icon.png'))
   })
 
-  it('keeps only the newest configured number of artifacts and tolerates a missing directory', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'teleprompt-crashes-'))
-    created.push(directory)
-    const newest = join(directory, 'newest.dmp')
-    const older = join(directory, 'older.meta')
-    await Promise.all([writeFile(newest, 'new'), writeFile(older, 'old')])
-    const now = Date.now()
-    await utimes(older, new Date(now - 1000), new Date(now - 1000))
-
-    await purgeOldCrashArtifacts(directory, {
-      now,
-      maxAgeMs: Number.MAX_SAFE_INTEGER,
-      maxArtifacts: 1,
-    })
-
-    await expect(stat(newest)).resolves.toBeDefined()
+  it('keeps the genuinely newer artifact and tolerates a missing directory', async () => {
+    const root = await directory()
+    const meta = await artifact('.meta')
+    const dump = await artifact('.dmp')
+    const older = join(root, meta.name)
+    const newer = join(root, dump.name)
+    await copyFile(meta.path, older)
+    await new Promise(resolve => setTimeout(resolve, 25))
+    await copyFile(dump.path, newer)
+    expect((await stat(newer)).mtimeMs).toBeGreaterThan((await stat(older)).mtimeMs)
+    await purgeOldCrashArtifacts(root, { maxArtifacts: 1 })
+    expect(await readFile(newer)).toEqual(dump.bytes)
     await expect(stat(older)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(
-      purgeOldCrashArtifacts(join(directory, 'missing')),
-    ).resolves.toBeUndefined()
+    expect(await readdir(root)).toEqual([dump.name])
+    await expect(purgeOldCrashArtifacts(join(root, 'missing'))).resolves.toBeUndefined()
+  })
+
+  it('preserves fresh dump and metadata bytes under the default retention policy', async () => {
+    const root = await directory()
+    const dump = await artifact('.dmp')
+    const meta = await artifact('.meta')
+    await Promise.all([copyFile(dump.path, join(root, dump.name)), copyFile(meta.path, join(root, meta.name))])
+    await purgeOldCrashArtifacts(root)
+    expect(await readFile(join(root, dump.name))).toEqual(dump.bytes)
+    expect(await readFile(join(root, meta.name))).toEqual(meta.bytes)
   })
 })

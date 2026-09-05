@@ -1,6 +1,6 @@
 # Implementation status — 2026-09-04
 
-Subsequent 1.0.3 work is recorded in [RETENTION_HARDENING.md](RETENTION_HARDENING.md): startup symlink-root deletion fixed, diagnostic tests converted, reviewed subset expanded to 89 tests, and eight unreviewed suites remaining. The counts below preserve the earlier implementation checkpoint.
+The latest test-only continuation is recorded in [CRASH_CORPUS_QUALIFICATION.md](CRASH_CORPUS_QUALIFICATION.md). It follows [1.0.3 retention hardening](RETENTION_HARDENING.md). The counts below preserve the earlier implementation checkpoint; use the latest record for corpus requirements and current gates.
 
 Baseline commit: `984b52b5acf2c5042a0dbe70b359d6f38dc6c981`. This records the implementation gate before the subsequent push/deploy/install instruction. See [RELEASE_1.0.1.md](RELEASE_1.0.1.md) for the later installation and stress qualification. Existing unrelated `.gitignore`, `.claude/`, `.ignore`, and `.mcp.json` changes were left alone.
 
@@ -46,7 +46,7 @@ Residual integrity limitations: rename has a final race window against another e
 
 ## Reproduce the reviewed gate
 
-Set `TELEPROMPT_REAL_DOCX` and `TELEPROMPT_REAL_PDF` to genuine local document paths. `scripts/test-real.mjs` refuses missing corpus inputs and names the unqualified legacy scope. Then run:
+Set `TELEPROMPT_REAL_DOCX` and `TELEPROMPT_REAL_PDF` to genuine local document paths, and `TELEPROMPT_REAL_CRASH_CORPUS` to a [captured native corpus](CRASH_CORPUS_QUALIFICATION.md). `scripts/test-real.mjs` refuses missing corpus inputs and names the unqualified legacy scope. Then run:
 
 ```bash
 npm run typecheck

@@ -1,5 +1,5 @@
 {
-  "method": "Source review and executed real-input suite; 89 passing tests in 21 files, 2026-09-04. Missing files are not certified. The diagnostic fixture is a verbatim public GitHub log line, already credential-masked at its source.",
+  "method": "Source review and executed real-input suite; 92 passing tests in 22 files, 2026-09-04. Missing files are not certified. Diagnostic input is a verbatim public masked GitHub log; crash-retention input is unmodified native Crashpad output captured by the packaged recovery test and retained locally.",
   "files": {
     "src/main/application/app-store.test.ts": "a299ac0b1cc11756466a63553ae686cf831a860629539efe2457489d086e8996",
     "src/main/application/app-store.real.test.ts": "0e2cee12743664aaa424e2cacc87c7b72f2e28a2c308150d1e9ba072a4b43da2",
@@ -21,6 +21,7 @@
     "src/renderer/src/shared/render-policy.test.ts": "b6a95995b4c2b04534a871761d3ee130aa516aba99dba2e9364114e70471be1e",
     "src/renderer/src/shared/voice.test.ts": "56e05e7111ab956fa26d9ae650c9b28f3518541c21f23747226279f2a5ed83d2",
     "src/main/diagnostic-log.test.ts": "8ee167a4d481bf61588cec2282753a4e78b78c36698b3adee77369348cbcc98e",
-    "src/main/lifecycle/crash-retention.real.test.ts": "fe0886f53ae68581a51c68ce8bd69add65e050aa509f958f02fe6add8d4b8d53"
+    "src/main/lifecycle/crash-retention.real.test.ts": "fe0886f53ae68581a51c68ce8bd69add65e050aa509f958f02fe6add8d4b8d53",
+    "src/main/lifecycle/crash-retention.test.ts": "18f827b5ce9c5c35ae1e445fabc87678079a49a2e5f393b6d9a25903ff4763c5"
   }
 }

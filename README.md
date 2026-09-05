@@ -53,7 +53,7 @@ npm run build
 npm run test:e2e
 ```
 
-`test:real` and the packaged format checks require `TELEPROMPT_REAL_DOCX` and `TELEPROMPT_REAL_PDF` to name genuine local documents. Repository Markdown files supply the other document bytes. The reviewed subset refuses missing binary inputs instead of silently skipping them. Legacy suites still containing fabricated fixtures are outside this subset; `npm test`, coverage, and the full release gate remain unqualified until that conversion is complete. See [implementation status](docs/audits/2026-09-04/IMPLEMENTATION_STATUS.md) for evidence and remaining gates.
+`test:real` and the packaged format checks require `TELEPROMPT_REAL_DOCX` and `TELEPROMPT_REAL_PDF` to name genuine local documents. The reviewed units also require `TELEPROMPT_REAL_CRASH_CORPUS`, a local `crash-corpus` directory captured by the packaged recovery test. Repository Markdown files supply the other document bytes. Missing inputs fail the gate. See [capture commands and qualification evidence](docs/audits/2026-09-04/CRASH_CORPUS_QUALIFICATION.md). Legacy suites still containing fabricated fixtures remain outside this subset; the full release gate remains unqualified until that conversion is complete.
 
 The packaged tests launch the fused production binary, cross the utility-process importer boundary, protect an externally changed source, recover drafts after restart, exercise playback checkpoints, verify preload isolation, and force a renderer crash to prove bounded recreation.
 

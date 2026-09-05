@@ -80,7 +80,7 @@ npm run check:release
 npm run package
 ```
 
-Full unit and coverage commands currently stop at the real-input qualification guard while eight suites await conversion. To run the reviewed subset, set `TELEPROMPT_REAL_DOCX` and `TELEPROMPT_REAL_PDF` to genuine local files and run `npm run test:real`. See [the qualification record](docs/audits/2026-09-04/RETENTION_HARDENING.md) for the remaining work.
+Full unit and coverage commands currently stop at the real-input qualification guard while seven suites await conversion. The reviewed subset requires genuine local DOCX/PDF inputs and native Crashpad artifacts. Follow [the corpus capture and test commands](docs/audits/2026-09-04/CRASH_CORPUS_QUALIFICATION.md) before running `npm run test:real`.
 
 Artifacts are written to `release/`. To build one format, use `npm run package:appimage` or `npm run package:deb`.
 

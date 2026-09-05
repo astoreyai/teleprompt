@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test'
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { launch, surface, recoveredSurface, stop, readme, security } from './harness.js'
 
 test('packaged importer survives its process boundary and refuses an external-edit overwrite', async () => {
@@ -162,6 +163,30 @@ for (const role of ['controls', 'overlay'] as const) {
       const surviving = await surface(application, role === 'controls' ? 'overlay' : 'controls')
       expect(await surviving.evaluate(() => document.readyState)).toBe('complete')
       await stop(application)
+      // Real Crashpad output from this native run; keep process-memory artifacts local.
+      const pending = join(directory, 'teleprompt', 'Crashpad', 'pending')
+      const corpus = test.info().outputPath('crash-corpus')
+      await mkdir(corpus, { recursive: true, mode: 0o700 })
+      const artifacts = []
+      for (const name of (await readdir(pending)).filter(name => /\.(dmp|meta)$/.test(name))) {
+        const path = join(pending, name)
+        const bytes = await readFile(path)
+        const info = await stat(path)
+        await copyFile(path, join(corpus, name))
+        artifacts.push({ name, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
+          sourceMtime: info.mtime.toISOString() })
+      }
+      expect(artifacts.some(file => file.name.endsWith('.dmp'))).toBe(true)
+      expect(artifacts.some(file => file.name.endsWith('.meta'))).toBe(true)
+      const executable = resolve(process.env.TELEPROMPT_E2E_EXECUTABLE ?? 'release/linux-unpacked/teleprompt')
+      const asar = await readFile(join(dirname(executable), 'resources', 'app.asar'))
+      await writeFile(join(corpus, 'provenance.json'), JSON.stringify({
+        origin: test.info().title, capturedAt: new Date().toISOString(),
+        trigger: 'Four real renderer crashes through CDP Page.crash after importing the repository README',
+        applicationSha256: createHash('sha256').update(asar).digest('hex'),
+        inputSha256: createHash('sha256').update(readme).digest('hex'),
+        transformation: 'Unmodified Crashpad bytes copied after application shutdown', artifacts,
+      }, null, 2) + '\n')
     } finally {
       await stop(application).catch(() => undefined)
       if (application.process.exitCode === null) application.process.kill('SIGKILL')
