@@ -409,7 +409,6 @@ function FullView({
       <div
         className="overlay__viewport"
         ref={viewportRef}
-        onDoubleClick={() => content && void window.overlayApi.openEditor()}
       >
         {content ? (
           html ? (
@@ -563,7 +562,7 @@ function BannerView({ snapshot, metadata: _metadata, content }: ViewProps) {
         ref={stripRef}
       >
         {content ? (
-          <div ref={textRef} className="banner__text" dir="auto" onDoubleClick={() => void window.overlayApi.openEditor()}>
+          <div ref={textRef} className="banner__text" dir="auto">
             {flat}
           </div>
         ) : (

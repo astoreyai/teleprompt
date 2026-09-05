@@ -1,14 +1,13 @@
-import { copyFile, mkdtemp, readFile, readdir, stat, symlink, truncate } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, stat, truncate } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createDefaultSnapshot } from '../../shared/defaults.js'
-import { DraftRepository, MetadataRepository } from './repositories.js'
+import { MetadataRepository } from './repositories.js'
 import { persistedFromSnapshot } from './schema.js'
 
-// Provenance: draft bytes from repository Markdown; damaged metadata is the actual
-// repository output truncated by the filesystem, never an authored fake JSON fixture.
-const readmePath = resolve('README.md')
+// Damaged metadata is actual repository output truncated by the filesystem,
+// never an authored fake JSON fixture.
 async function tempDirectory(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'teleprompt-state-real-'))
 }
@@ -51,32 +50,5 @@ describe('metadata repository', () => {
     expect(recovered.source).toBe('backup')
     expect(recovered.parsed.value.state.opacity).toBe(first.state.opacity)
     expect(recovered.parsed.issues).toContain('recovered state from backup')
-  })
-})
-
-describe('draft repository', () => {
-  it('round-trips bounded drafts in a private directory', async () => {
-    const directory = await tempDirectory()
-    const content = await readFile(readmePath, 'utf8')
-    const repository = new DraftRepository(join(directory, 'drafts'), Buffer.byteLength(content))
-    await repository.write('README.md', content)
-    expect(await repository.read('README.md')).toBe(content)
-    expect((await stat(join(directory, 'drafts'))).mode & 0o077).toBe(0)
-    await repository.delete('README.md')
-    expect(await repository.read('README.md')).toBeNull()
-  })
-
-  it('rejects traversal, oversized content, and symbolic-link drafts', async () => {
-    const directory = await tempDirectory()
-    const content = await readFile(readmePath, 'utf8')
-    const draftDirectory = join(directory, 'drafts')
-    const repository = new DraftRepository(draftDirectory, Buffer.byteLength(content) - 1)
-    await expect(repository.write('../README.md', content)).rejects.toThrow('invalid document id')
-    await expect(repository.write('README.md', content)).rejects.toThrow('draft too large')
-    await repository.initialize()
-    const outside = join(directory, 'README.md')
-    await copyFile(readmePath, outside)
-    await symlink(outside, join(draftDirectory, 'linked.txt'))
-    await expect(repository.read('linked')).rejects.toThrow('symbolic link')
   })
 })

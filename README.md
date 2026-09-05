@@ -1,6 +1,6 @@
 # Teleprompt
 
-Teleprompt is a crash-resilient transparent teleprompter for Linux x64. It provides a separate operator window and always-on-top reading overlay, multi-document workspaces, local recovery drafts, cue points, paced scrolling, optional voice pacing, and X11 presentation controls.
+Teleprompt reads local files and plays them in a transparent, always-on-top overlay for Linux x64. A separate operator window provides a file playlist, read-only preview, paced scrolling, cue points, appearance settings, and X11 presentation controls. There is no document editor or voice recognition.
 
 Version 1.0 is intentionally released and verified for Linux x64. Windows and macOS are not current release targets.
 
@@ -10,7 +10,7 @@ Download an AppImage, Debian package, or tar archive together with `SHA256SUMS.t
 
 ```bash
 sha256sum --check SHA256SUMS.txt
-sudo apt install ./teleprompt_1.0.3_amd64.deb
+sudo apt install ./teleprompt_1.1.0_amd64.deb
 ```
 
 See [INSTALL.md](INSTALL.md) for portable formats, upgrades, local data, platform constraints, and troubleshooting.
@@ -29,20 +29,19 @@ The controls window owns file and settings actions. The overlay has a smaller, r
 ## What is supported
 
 - Imports `.txt`, `.md`, `.markdown`, `.fountain`, `.rtf`, `.docx`, `.odt`, `.pdf`, `.html`, `.htm`, `.srt`, and `.vtt` files.
-- Overwrites only lossless text sources: plain text, Markdown, and Fountain.
-- Saves extracted PDF, Word, OpenDocument, HTML, RTF, and subtitle content to a new text file; the binary or structured source is never overwritten.
-- Detects external edits before overwriting a text source and offers a save-copy path.
-- Keeps unsaved edits in private recovery drafts and restores them paused after a clean exit, renderer crash, or process restart.
-- Uses stable document IDs and revisions so delayed editor writes cannot modify a neighboring playlist item.
+- Reads every source format without writing to it. Edit the source in your preferred application, then choose **Reload source**.
+- Restores the playlist and settings after restart, with the selected file loaded first and remaining files restored in the background.
+- Preserves existing recovery drafts from earlier releases for read-only access.
+- Uses stable document IDs and revisions to keep playback and file selection consistent.
 - Runs untrusted document parsing in a bounded, killable Electron utility process.
 - Keeps scrolling in the overlay renderer and checkpoints only small scalar progress messages to the main process.
-- Supports sanitized Markdown, mirrored text, eye-line/focus modes, countdowns, cue points, manual speed, duration/WPM targets, global hotkeys, and optional voice pacing. Very large scripts stay in plain-text mode and do not enable memory-heavy voice tokenization.
+- Supports sanitized Markdown, mirrored text, eye-line/focus modes, countdowns, cue points, manual speed, duration/WPM targets, global hotkeys, and presentation controls. Very large scripts use plain-text rendering. The operator preview is bounded; the overlay plays the full accepted file.
 
-## Save and recovery behavior
+## Playlist and recovery behavior
 
-An acknowledged editor update is written to a private draft before the command returns. Metadata is then atomically committed with a backup. On startup, Teleprompt tries the primary state, its backup, and legacy state in order; invalid or future-version state is quarantined rather than shallow-merged.
+Playlist changes are committed to private metadata with a backup. Settings are saved automatically; the footer shows the last successful metadata timestamp. On startup, Teleprompt tries the primary state, its backup, and legacy state in order; invalid or future-version state is quarantined rather than shallow-merged.
 
-Clean source documents are re-read through the same bounded importer. Dirty documents restore from the matching draft. Playback, voice activity, clicker arming, and presentation arming always restart off.
+Source documents are re-read through the same bounded importer. Old recovered scripts restore from their matching draft. Removing or reloading a recovered item preserves its old draft bytes on disk. Playback, clicker arming, and presentation arming always restart off.
 
 ## Verification loop
 
@@ -53,9 +52,9 @@ npm run build
 npm run test:e2e
 ```
 
-`test:real` and the packaged format checks require `TELEPROMPT_REAL_DOCX` and `TELEPROMPT_REAL_PDF` to name genuine local documents. The reviewed units also require `TELEPROMPT_REAL_CRASH_CORPUS`, a local `crash-corpus` directory captured by the packaged recovery test. Repository Markdown files supply the other document bytes. Missing inputs fail the gate. See [capture commands and qualification evidence](docs/audits/2026-09-04/CRASH_CORPUS_QUALIFICATION.md). Legacy suites still containing fabricated fixtures remain outside this subset; the full release gate remains unqualified until that conversion is complete.
+`test:real` and the packaged format checks require `TELEPROMPT_REAL_DOCX` and `TELEPROMPT_REAL_PDF` to name genuine documents; attributed public documents are included under `test/fixtures/public`. The reviewed units also require `TELEPROMPT_REAL_CRASH_CORPUS`, a local `crash-corpus` directory captured by the packaged recovery test. Repository Markdown files supply other document bytes. Missing inputs fail the gate. See [capture commands](docs/audits/2026-09-04/CRASH_CORPUS_QUALIFICATION.md) and the [read-only qualification record](docs/audits/2026-09-05/READ_ONLY_RELEASE.md). Full release qualification additionally requires the reviewed-suite manifest and unchanged coverage thresholds.
 
-The packaged tests launch the fused production binary, cross the utility-process importer boundary, protect an externally changed source, recover drafts after restart, exercise playback checkpoints, verify preload isolation, and force a renderer crash to prove bounded recreation.
+The packaged tests launch the fused production binary, cross the utility-process importer boundary, verify unchanged source files and settings after restart, exercise playback checkpoints, verify preload isolation and microphone denial, and force renderer crashes to check bounded recreation.
 
 ## Architecture
 
@@ -65,8 +64,7 @@ flowchart LR
   O[Overlay renderer] -->|semantic OverlayApi| P
   P -->|authorized IPC| M[main application layer]
   M --> W[workspace + controller]
-  M --> R[private metadata + drafts]
-  M --> S[atomic save service]
+  M --> R[private metadata + legacy draft reader]
   M --> U[bounded parser utility process]
   W -->|content-free snapshot| C
   W -->|active content by revision| C
@@ -81,7 +79,7 @@ The full design, invariants, and failure policy are in [docs/ARCHITECTURE.md](do
 - Both windows use sandboxing, context isolation, disabled Node integration, navigation denial, a restrictive CSP, and exact role/top-frame IPC authorization.
 - Production uses a private `teleprompt://app` renderer origin and hardened Electron fuses; CI verifies the executable and ASAR layout after packaging.
 - File reads are regular-file-only, symlink-refusing, bounded, and nonblocking. Archive imports are preflighted for expansion, entry, path, and compression-ratio limits.
-- Voice pacing is off until explicit consent. Chromium speech recognition may use a network service depending on the platform; the UI exposes active status and consent revocation.
+- Microphone and other device permission requests are denied. There is no speech recognition engine or voice API.
 - Crash reports remain local, secret-like environment variables are removed before Crashpad starts, artifacts are retained for at most seven days/ten files, and the 512 KiB diagnostic log is private, rotated, and credential-redacted.
 
 See [SECURITY.md](SECURITY.md) for the threat model and residual risks.
@@ -91,7 +89,6 @@ See [SECURITY.md](SECURITY.md) for the threat model and residual risks.
 - Hardware acceleration is disabled by default because the reviewed installation had historical GPU/renderer native crashes. Set `TELEPROMPT_HWACCEL=1` only after validating the target machine.
 - Screen-capture protection is unavailable in Electron on Linux and is disabled in the UI.
 - X11 presentation driving requires `xdotool`; Wayland compositors vary in always-on-top and global-hotkey behavior.
-- Voice pacing depends on Web Speech Recognition availability and has no local speech engine fallback.
 
 Development rules and the TDD loop are in [CONTRIBUTING.md](CONTRIBUTING.md).
 

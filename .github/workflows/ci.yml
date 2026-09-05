@@ -17,6 +17,13 @@ jobs:
   linux-x64:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      TELEPROMPT_REAL_DOCX: test/fixtures/public/dwi-privacy-notice.docx
+      TELEPROMPT_REAL_PDF: test/fixtures/public/us-constitution.pdf
+      TELEPROMPT_REAL_LEGACY_PROFILE: test/fixtures/public/legacy-1.0.3
+      TELEPROMPT_REAL_LEGACY_STATE: test/fixtures/public/legacy-0.1.0/teleprompt-state.json
+      TELEPROMPT_E2E_EXECUTABLE: release/linux-unpacked/teleprompt
+      CHROME_DEVEL_SANDBOX: '${{ github.workspace }}/release/linux-unpacked/chrome-sandbox'
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -33,7 +40,7 @@ jobs:
       - name: Install Linux runtime libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xclip libgtk-3-0 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 libatspi2.0-0
+          sudo apt-get install -y xvfb xclip xdotool x11-utils libgtk-3-0 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 libatspi2.0-0
 
       - name: Install locked dependencies
         run: npm ci
@@ -44,12 +51,6 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Require reviewed real-input release qualification
-        run: node scripts/check-release-qualification.mjs
-
-      - name: Unit and coverage gates
-        run: npm run test:coverage
-
       - name: Build and verify packaged app
         run: npm run package:dir
 
@@ -59,10 +60,50 @@ jobs:
           sudo chmod 4755 release/linux-unpacked/chrome-sandbox
           test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
 
-      - name: Packaged crash/recovery smoke test
+      - name: Packaged runtime and native crash capture
         env:
-          TELEPROMPT_E2E_EXECUTABLE: release/linux-unpacked/teleprompt
-        run: npm run test:e2e
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/packaged.json
+        run: npm run test:e2e -- --retries=0 --reporter=json --output=test-results/runtime
+
+      - name: Select genuine Crashpad input from this run
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFile, readFile, readdir } from 'node:fs/promises'
+          import { resolve, dirname } from 'node:path'
+          const root = resolve('test-results/runtime')
+          const files = await readdir(root, { recursive: true })
+          const path = files.find(file => file.endsWith('/crash-corpus/provenance.json'))
+          if (!path) throw new Error('Native tests produced no captured Crashpad corpus')
+          const manifest = resolve(root, path)
+          const captured = JSON.parse(await readFile(manifest, 'utf8'))
+          for (const extension of ['.dmp', '.meta']) {
+            if (!captured.artifacts.some(file => file.name.endsWith(extension))) {
+              throw new Error(`Native corpus is missing ${extension} artifacts`)
+            }
+          }
+          await appendFile(process.env.GITHUB_ENV, `TELEPROMPT_REAL_CRASH_CORPUS=${dirname(manifest)}\n`)
+          NODE
+
+      - name: Reviewed real-input unit gate
+        run: npm run test:real -- --reporter=json --outputFile=test-results/reviewed-units.json
+
+      - name: Require reviewed real-input release qualification
+        run: node scripts/check-release-qualification.mjs
+
+      - name: Full unit and coverage gates
+        run: npm run test:coverage
+
+      - name: Upload verification reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: teleprompt-verification-${{ github.sha }}
+          path: |
+            test-results/packaged.json
+            test-results/reviewed-units.json
+            coverage/coverage-summary.json
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Build distributable formats
         if: startsWith(github.ref, 'refs/tags/v')

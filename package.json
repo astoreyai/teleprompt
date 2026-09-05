@@ -1,7 +1,7 @@
 {
   "name": "teleprompt",
-  "version": "1.0.3",
-  "description": "Transparent screen-overlay teleprompter with voice pacing, cue points, and presentation drive",
+  "version": "1.1.0",
+  "description": "Read-only transparent teleprompter with file playback, cue points, and presentation controls",
   "main": "out/main/index.js",
   "type": "module",
   "license": "MIT",
@@ -69,7 +69,7 @@
   "build": {
     "appId": "dev.astoreyai.teleprompt",
     "productName": "Teleprompt",
-    "copyright": "Copyright © 2026 Aaron Storey",
+    "copyright": "Copyright \u00a9 2026 Aaron Storey",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -121,7 +121,7 @@
       "icon": "build/icon.png",
       "category": "AudioVideo",
       "synopsis": "Transparent overlay teleprompter",
-      "description": "Always-on-top transparent teleprompter with voice pacing, cue points, multi-format ingest (txt/md/rtf/docx/odt/pdf/html/fountain/srt/vtt), presentation drive, and configurable hotkeys.",
+      "description": "Always-on-top transparent file teleprompter with playback pacing, cue points, multi-format reading (txt/md/rtf/docx/odt/pdf/html/fountain/srt/vtt), presentation controls, and configurable hotkeys.",
       "maintainer": "Aaron Storey <astoreyai@users.noreply.github.com>"
     },
     "deb": {

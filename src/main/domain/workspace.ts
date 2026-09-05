@@ -5,7 +5,6 @@ import type {
   DocumentId,
   DocumentMeta,
   DocumentRecord,
-  DocumentUpdateResult,
 } from '../../shared/contracts.js'
 import { createDefaultSnapshot } from '../../shared/defaults.js'
 import { MAX_DOCUMENT_BYTES } from '../../shared/text.js'
@@ -14,10 +13,6 @@ import { getSaveMode } from '../files/file-policy.js'
 const DEFAULT_MAX_DOCUMENTS = 100
 const DEFAULT_MAX_DOCUMENT_CHARS = 10 * 1024 * 1024
 const DEFAULT_MAX_TOTAL_CHARS = 50 * 1024 * 1024
-type DocumentUpdateValidation =
-  | { ok: true; revision: number; previousLength: number }
-  | Exclude<DocumentUpdateResult, { ok: true }>
-
 export class WorkspaceLimitError extends Error {}
 
 export class DocumentWorkspace {
@@ -147,73 +142,6 @@ export class DocumentWorkspace {
     return true
   }
 
-  updateDocument(input: {
-    id: DocumentId
-    expectedRevision: number
-    content: string
-  }): DocumentUpdateResult {
-    const validation = this.validateDocumentUpdate(input)
-    if (!validation.ok) return validation
-    const record = this.records.get(input.id)
-    if (!record) throw new Error('document update validation invariant failed')
-    this.totalBytes += Buffer.byteLength(input.content, 'utf8') - Buffer.byteLength(record.content, 'utf8')
-    record.content = input.content
-    record.revision += 1
-    record.dirty = true
-    this.totalChars = this.totalChars - validation.previousLength + input.content.length
-    this.refreshMeta(record)
-    return { ok: true, revision: record.revision }
-  }
-
-  validateDocumentUpdate(input: {
-    id: DocumentId
-    expectedRevision: number
-    content: string
-  }): DocumentUpdateValidation {
-    const record = this.records.get(input.id)
-    if (!record) return { ok: false, reason: 'not-found' }
-    if (record.revision !== input.expectedRevision) {
-      return { ok: false, reason: 'conflict', currentRevision: record.revision }
-    }
-    const maxDocumentChars = this.options.maxDocumentChars ?? DEFAULT_MAX_DOCUMENT_CHARS
-    const maxTotalChars = this.options.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS
-    const nextTotal = this.totalChars - record.content.length + input.content.length
-    const nextBytes = this.totalBytes - Buffer.byteLength(record.content, 'utf8') + Buffer.byteLength(input.content, 'utf8')
-    if (input.content.length > maxDocumentChars || nextTotal > maxTotalChars ||
-      Buffer.byteLength(input.content, 'utf8') > (this.options.maxDocumentBytes ?? MAX_DOCUMENT_BYTES) ||
-      nextBytes > (this.options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_CHARS)) {
-      return { ok: false, reason: 'too-large' }
-    }
-    return { ok: true, revision: record.revision + 1, previousLength: record.content.length }
-  }
-
-  markSaved(input: {
-    id: DocumentId
-    sourcePath: string
-    format: DocumentFormat
-    sourceMtimeMs: number
-    sourceHash: string
-  }): boolean {
-    const record = this.records.get(input.id)
-    if (!record) return false
-    record.sourcePath = input.sourcePath
-    record.name = input.sourcePath.split(/[\\/]/).pop() || record.name
-    record.format = input.format
-    record.saveMode = getSaveMode(record)
-    record.sourceMtimeMs = input.sourceMtimeMs
-    record.sourceHash = input.sourceHash
-    record.dirty = false
-    this.refreshMeta(record)
-    return true
-  }
-
-  retainDraft(id: DocumentId): void {
-    const record = this.records.get(id)
-    if (!record) return
-    record.dirty = true
-    this.refreshMeta(record)
-  }
-
   replaceDocument(
     id: DocumentId,
     input: {
@@ -265,14 +193,10 @@ export class DocumentWorkspace {
       documents: this.snapshot.documents,
       activeDocumentId: this.snapshot.activeDocumentId,
       playing: false,
-      editMode: false,
-      voicePacing: false,
       clickerMode: false,
       drivePresentation: false,
       playbackSessionId: null,
       overlayVisible: true,
-      voiceStatus: 'off',
-      voiceError: null,
     }
     return this.getSnapshot()
   }

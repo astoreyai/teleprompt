@@ -1,0 +1,30 @@
+{
+  "documents": [
+    {
+      "name": "dwi-privacy-notice.docx",
+      "url": "https://dwi-production-files.s3.eu-west-2.amazonaws.com/wp-content/uploads/2022/09/06151347/DWI-Privacy-Notice-v3b.docx",
+      "sha256": "b954bd1d1a5609467565a8c02b9a9d9da1c9b82e371ed806f737217264853846",
+      "bytes": 33895,
+      "title": "Drinking Water Inspectorate Privacy Notice v3b",
+      "source_page": "https://www.dwi.gov.uk/privacy-notice/",
+      "license": "Open Government Licence v3.0; Crown copyright",
+      "license_url": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+      "attribution": "Contains public sector information licensed under the Open Government Licence v3.0. Source: Drinking Water Inspectorate.",
+      "captured_at": "2026-09-05T02:43:05.463203+00:00",
+      "transformation": "None; unmodified publication bytes."
+    },
+    {
+      "name": "us-constitution.pdf",
+      "url": "https://www.govinfo.gov/content/pkg/GOVMAN-2025-12-31/pdf/GOVMAN-2025-12-31-Constitution-of-the-United-States-3.pdf",
+      "sha256": "d9766356da11c8185810f2ef91e36400f8be83549d2fb52465bd79de93bea7aa",
+      "bytes": 338161,
+      "title": "Constitution of the United States, United States Government Manual (December 31, 2025)",
+      "source_page": "https://www.govinfo.gov/app/details/GOVMAN-2025-12-31/GOVMAN-2025-12-31-Constitution-of-the-United-States-3/context",
+      "license": "United States government work; public domain under 17 USC 105",
+      "license_url": "https://www.govinfo.gov/about/policies",
+      "attribution": "Office of the Federal Register, National Archives and Records Administration; distributed by the Government Publishing Office.",
+      "captured_at": "2026-09-05T02:43:05.826726+00:00",
+      "transformation": "None; unmodified publication bytes."
+    }
+  ]
+}

@@ -1,10 +1,8 @@
 import type {
   AppSnapshot,
   DocumentContent,
-  DocumentFormat,
   DocumentId,
   DocumentMeta,
-  DocumentUpdateResult,
   OverlaySnapshot,
 } from './contracts.js'
 import type { HotkeyCommand } from './types.js'
@@ -29,6 +27,7 @@ export type AppAbout = {
 export type ControlsBootstrapPayload = {
   snapshot: AppSnapshot
   activeDocument: DocumentContent | null
+  storageStatus: { lastPersistedAt: number | null; restoring: boolean }
   startupIssues: string[]
   unresolvedDocuments: Omit<DocumentMeta, 'saveMode'>[]
 }
@@ -59,7 +58,6 @@ export type PreferencePatch = Partial<
     | 'markdown'
     | 'bannerMode'
     | 'bannerPosition'
-    | 'editMode'
     | 'clickerStep'
     | 'showChronometer'
     | 'countdownEnabled'
@@ -72,25 +70,8 @@ export type PreferencePatch = Partial<
   >
 >
 
-export type SaveResult =
-  | { ok: true; document: DocumentMeta }
-  | {
-      ok: false
-      reason: 'storage-failed'
-      sourceSaved: true
-      currentRevision: number
-      targetPath: string
-      error: string
-    }
-  | {
-      ok: false
-      reason: 'not-found' | 'cancelled' | 'conflict' | 'invalid-target' | 'write-failed'
-      error?: string
-    }
-
 export type ControlsApi = {
-  onFlushRequest(callback: (requestId: string) => void): () => void
-  acknowledgeFlush(requestId: string, ok: boolean): Promise<void>
+  onStorageStatus(callback: (status: { lastPersistedAt: number | null; restoring: boolean }) => void): () => void
   onStorageIssues(callback: (issues: string[]) => void): () => void
   onClosingChanged(callback: (closing: boolean) => void): () => void
   onUnresolvedDocuments(callback: (documents: Omit<DocumentMeta, 'saveMode'>[]) => void): () => void
@@ -98,21 +79,14 @@ export type ControlsApi = {
   openFiles(): Promise<{ loaded: DocumentMeta[]; errors: Array<{ name: string; error: string }> }>
   openRecent(path: string): Promise<{ ok: true; document: DocumentMeta } | { ok: false; error: string }>
   openDroppedFile(file: File): Promise<{ ok: true; document: DocumentMeta } | { ok: false; error: string }>
-  createDocument(name: string, content: string, format: 'text' | 'markdown' | 'fountain'): Promise<DocumentMeta>
   selectDocument(id: DocumentId): Promise<{ ok: boolean }>
-  removeDocument(id: DocumentId, discardDirty: boolean): Promise<{ ok: true } | { ok: false; reason: 'not-found' | 'dirty' }>
-  updateDocument(id: DocumentId, expectedRevision: number, content: string): Promise<DocumentUpdateResult>
-  saveDocument(id: DocumentId, saveAs?: boolean): Promise<SaveResult>
-  reloadDocument(id: DocumentId, discardDirty: boolean): Promise<{ ok: true } | { ok: false; reason: string }>
+  removeDocument(id: DocumentId): Promise<{ ok: true } | { ok: false; reason: 'not-found' | 'dirty' }>
+  reloadDocument(id: DocumentId): Promise<{ ok: true } | { ok: false; reason: string }>
   togglePlayback(): Promise<{ ok: boolean; reason?: string }>
   restartPlayback(): Promise<void>
   seek(position: number): Promise<void>
   updatePreferences(patch: PreferencePatch): Promise<AppSnapshot>
   setOverlayVisible(visible: boolean): Promise<void>
-  requestVoice(enabled: boolean): Promise<{ ok: boolean; reason?: string }>
-  grantVoiceConsent(): Promise<void>
-  revokeVoiceConsent(): Promise<void>
-  reportVoiceStatus(status: 'off' | 'starting' | 'active' | 'error', error?: string): Promise<void>
   setClickerArmed(enabled: boolean): Promise<void>
   setPresentationArmed(enabled: boolean): Promise<void>
   updateHotkeys(bindings: Record<HotkeyCommand, string>): Promise<void>
@@ -149,12 +123,10 @@ export type OverlayApi = {
   resizeStart(screenX: number, screenY: number, edge: string): Promise<void>
   resizeUpdate(screenX: number, screenY: number): Promise<void>
   resizeEnd(): Promise<void>
-  openEditor(): Promise<void>
   onSnapshot(callback: (snapshot: OverlaySnapshot) => void): () => void
   onActiveDocument(callback: (document: DocumentContent | null) => void): () => void
 }
 
-export type SupportedCreateFormat = Extract<DocumentFormat, 'text' | 'markdown' | 'fountain'>
 
 export type OverlayGeometry = {
   documentId: DocumentId

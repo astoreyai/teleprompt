@@ -49,7 +49,6 @@ export function exportablePreferences(snapshot: AppSnapshot): {
   hotkeyBindings: AppSnapshot['hotkeyBindings']
 } {
   const preferences = sanitizePreferencePatch(snapshot)
-  delete preferences.editMode
   return {
     version: 1,
     preferences,
@@ -67,7 +66,6 @@ const BOOLEAN_KEYS = [
   'hideFromCapture',
   'markdown',
   'bannerMode',
-  'editMode',
   'showChronometer',
   'countdownEnabled',
   'showCueHud',

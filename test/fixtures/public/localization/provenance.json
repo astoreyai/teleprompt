@@ -1,0 +1,35 @@
+{
+  "captured_at": "2026-09-05T03:13:30.932410+00:00",
+  "entries": [
+    {
+      "name": "ar-cancel.txt",
+      "source": "/usr/share/locale/ar/LC_MESSAGES/newt.mo",
+      "source_package": "libnewt0.52",
+      "source_version": "0.52.23-1+b1",
+      "source_sha256": "18706ab8878fd0d2363af958b1ecf386e861571219990c9b6ace0ed7a20d4ee4",
+      "source_mtime": "2023-01-31T14:53:35+00:00",
+      "upstream": "https://releases.pagure.org/newt/",
+      "selection": "GNU gettext translation for the production UI message Cancel",
+      "transformation": "Decode the existing MO catalog and retain the exact selected translated string as UTF-8, without a newline.",
+      "bytes": 10,
+      "sha256": "9a30dc2a96b897abdf7412f2bc0e09c6979d7a932c0bfc7567dcff37b73e50bb",
+      "license": "LGPL-2.0",
+      "copyright": "1996-2016 Red Hat, Inc."
+    },
+    {
+      "name": "he-cancel.txt",
+      "source": "/usr/share/locale/he/LC_MESSAGES/newt.mo",
+      "source_package": "libnewt0.52",
+      "source_version": "0.52.23-1+b1",
+      "source_sha256": "f2ad530e8de05b4cfeedb8dbe681c0dc6463f54a527387ae1af331aaf3a34029",
+      "source_mtime": "2023-01-31T14:53:35+00:00",
+      "upstream": "https://releases.pagure.org/newt/",
+      "selection": "GNU gettext translation for the production UI message Cancel",
+      "transformation": "Decode the existing MO catalog and retain the exact selected translated string as UTF-8, without a newline.",
+      "bytes": 10,
+      "sha256": "801b3f107cbc96e5ebd6054285ef497884e2eed46770dc74a8c16a7d88b4750d",
+      "license": "LGPL-2.0",
+      "copyright": "1996-2016 Red Hat, Inc."
+    }
+  ]
+}

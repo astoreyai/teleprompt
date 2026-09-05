@@ -1,16 +1,17 @@
-import { readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createWorkspace } from '../domain/workspace.js'
 import { AppController } from './controller.js'
+import { DocumentImportService } from '../documents/import-service.js'
+import { parseDocumentBytes } from '../parser/parser-core.js'
 
-// Script corpus: unmodified repository README/SECURITY and installed TypeScript declarations.
-function loadWorkspace(path = resolve('README.md')) {
+// Script corpus: unmodified repository README/SECURITY, imported through the real parser.
+async function loadWorkspace(path = resolve('README.md')) {
   const workspace = createWorkspace()
-  const document = workspace.addDocument({
-    name: path.split('/').pop()!, sourcePath: path, format: 'text',
-    content: readFileSync(path, 'utf8'), sourceMtimeMs: statSync(path).mtimeMs, sourceHash: null,
+  const importer = new DocumentImportService({
+    parse: (format, bytes, maxOutputChars) => parseDocumentBytes(format, bytes, { maxOutputChars }),
   })
+  const document = workspace.addDocument(await importer.loadPath(path))
   return { workspace, document, controller: new AppController(workspace) }
 }
 
@@ -19,14 +20,14 @@ describe('application controller playback sessions with real documents', () => {
     expect(new AppController(createWorkspace()).play()).toEqual({ ok: false, reason: 'no-document' })
   })
 
-  it('rejects stale document, revision, and session checkpoints', () => {
-    const { workspace, document, controller } = loadWorkspace()
+  it('rejects stale document, revision, and session checkpoints', async () => {
+    const { workspace, document, controller } = await loadWorkspace()
     controller.play()
     const oldSession = workspace.getSnapshot().playbackSessionId!
     controller.pause()
     controller.play()
     const currentSession = workspace.getSnapshot().playbackSessionId!
-    const other = loadWorkspace(resolve('SECURITY.md')).document
+    const other = (await loadWorkspace(resolve('SECURITY.md'))).document
     const checkpoint = { documentId: document.id, revision: document.revision, sessionId: currentSession,
       seekGeneration: workspace.getSnapshot().seekGeneration, position: 0.5, terminal: false }
     expect(controller.checkpoint({ ...checkpoint, documentId: other.id })).toEqual({ ok: false, reason: 'stale' })
@@ -35,8 +36,8 @@ describe('application controller playback sessions with real documents', () => {
     expect(workspace.getSnapshot().scrollPosition).toBe(0)
   })
 
-  it('accepts the active session, pauses deterministically, and completes at the end', () => {
-    const { workspace, document, controller } = loadWorkspace()
+  it('accepts the active session, pauses deterministically, and completes at the end', async () => {
+    const { workspace, document, controller } = await loadWorkspace()
     controller.play()
     const oldSession = workspace.getSnapshot().playbackSessionId!
     expect(controller.checkpoint({ documentId: document.id, revision: document.revision, sessionId: oldSession,
@@ -52,8 +53,8 @@ describe('application controller playback sessions with real documents', () => {
     expect(workspace.getSnapshot()).toMatchObject({ playing: false, playbackSessionId: null, scrollPosition: 1 })
   })
 
-  it('rejects delayed pre-seek progress and terminal checkpoints without restarting the countdown session', () => {
-    const { workspace, document, controller } = loadWorkspace()
+  it('rejects delayed pre-seek progress and terminal checkpoints without restarting the countdown session', async () => {
+    const { workspace, document, controller } = await loadWorkspace()
     controller.play()
     const checkpoint = { documentId: document.id, revision: document.revision,
       sessionId: workspace.getSnapshot().playbackSessionId!, seekGeneration: workspace.getSnapshot().seekGeneration,
@@ -67,26 +68,4 @@ describe('application controller playback sessions with real documents', () => {
     expect(workspace.getSnapshot()).toMatchObject({ scrollPosition: 0.001, seekGeneration: generation + 1 })
   })
 
-  it('revokes microphone consent and stops an active voice session', () => {
-    const { workspace, controller } = loadWorkspace()
-    controller.grantVoiceConsent()
-    expect(controller.requestVoice(true)).toEqual({ ok: true })
-    expect(workspace.getSnapshot()).toMatchObject({ voiceConsent: true, voicePacing: true, voiceStatus: 'starting' })
-    controller.revokeVoiceConsent()
-    expect(workspace.getSnapshot()).toMatchObject({ voiceConsent: false, voicePacing: false, voiceStatus: 'off', voiceError: null })
-  })
-
-  it('refuses memory-heavy voice tokenization for an oversized real script', () => {
-    const { workspace, controller } = loadWorkspace(resolve('node_modules/typescript/lib/typescript.d.ts'))
-    expect(workspace.getActiveDocument()!.content.length).toBeGreaterThan(500_000)
-    controller.grantVoiceConsent()
-    expect(controller.requestVoice(true)).toEqual({ ok: false, reason: 'document-too-large' })
-    expect(workspace.getSnapshot().voicePacing).toBe(false)
-  })
-
-  it('does not let a renderer status message bypass the voice consent state machine', () => {
-    const { workspace, controller } = loadWorkspace()
-    controller.reportVoiceStatus('active')
-    expect(workspace.getSnapshot()).toMatchObject({ voiceConsent: false, voicePacing: false, voiceStatus: 'off' })
-  })
 })

@@ -50,8 +50,7 @@ const onActiveDocument = (callback: (document: DocumentContent | null) => void):
 
 if (surface === 'controls') {
   const api: ControlsApi = {
-    onFlushRequest: (callback) => on<string>('editor:flush', callback),
-    acknowledgeFlush: (requestId, ok) => ipcRenderer.invoke('editor:flushed', { requestId, ok }),
+    onStorageStatus: callback => on('storage:status', callback),
     onStorageIssues: (callback) => on<string[]>('storage:issues', callback),
     onClosingChanged: (callback) => on<boolean>('app:closing', callback),
     onUnresolvedDocuments: (callback) => on('recovery:changed', callback),
@@ -63,25 +62,16 @@ if (surface === 'controls') {
       if (!path) return Promise.resolve({ ok: false, error: 'dropped file has no local path' })
       return ipcRenderer.invoke('documents:openDropped', { path })
     },
-    createDocument: (name, content, format) =>
-      ipcRenderer.invoke('documents:create', { name, content, format }),
     selectDocument: (id) => ipcRenderer.invoke('documents:select', { id }),
-    removeDocument: (id, discardDirty) =>
-      ipcRenderer.invoke('documents:remove', { id, discardDirty }),
-    updateDocument: (id, expectedRevision, content) =>
-      ipcRenderer.invoke('documents:update', { id, expectedRevision, content }),
-    saveDocument: (id, saveAs = false) => ipcRenderer.invoke('documents:save', { id, saveAs }),
-    reloadDocument: (id, discardDirty) =>
-      ipcRenderer.invoke('documents:reload', { id, discardDirty }),
+    removeDocument: (id) =>
+      ipcRenderer.invoke('documents:remove', { id }),
+    reloadDocument: (id) =>
+      ipcRenderer.invoke('documents:reload', { id }),
     togglePlayback: () => ipcRenderer.invoke('playback:toggle'),
     restartPlayback: () => ipcRenderer.invoke('playback:restart'),
     seek: (position) => ipcRenderer.invoke('playback:seek', position),
     updatePreferences: (patch: PreferencePatch) => ipcRenderer.invoke('preferences:update', patch),
     setOverlayVisible: (visible) => ipcRenderer.invoke('overlay:setVisible', visible),
-    requestVoice: (enabled) => ipcRenderer.invoke('voice:request', enabled),
-    grantVoiceConsent: () => ipcRenderer.invoke('voice:grantConsent'),
-    revokeVoiceConsent: () => ipcRenderer.invoke('voice:revokeConsent'),
-    reportVoiceStatus: (status, error) => ipcRenderer.invoke('voice:status', { status, error }),
     setClickerArmed: (enabled) => ipcRenderer.invoke('clicker:setArmed', enabled),
     setPresentationArmed: (enabled) =>
       ipcRenderer.invoke('presentation:setArmed', enabled),
@@ -119,7 +109,6 @@ if (surface === 'controls') {
     resizeUpdate: (screenX, screenY) =>
       ipcRenderer.invoke('overlay:resizeUpdate', { screenX, screenY }),
     resizeEnd: () => ipcRenderer.invoke('overlay:resizeEnd'),
-    openEditor: () => ipcRenderer.invoke('overlay:openEditor'),
     onSnapshot: (callback) => on<OverlaySnapshot>('snapshot:changed', callback),
     onActiveDocument,
   }

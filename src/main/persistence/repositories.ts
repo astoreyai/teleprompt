@@ -13,6 +13,7 @@ const DEFAULT_METADATA_LIMIT = 1024 * 1024
 const DOCUMENT_ID_PATTERN = /^[a-zA-Z0-9._:-]{1,128}$/
 
 export class MetadataRepository {
+  lastPersistedAt: number | null = null
   readonly path: string
   private readonly backupPath: string
   private readonly legacyPath: string | null
@@ -70,6 +71,7 @@ export class MetadataRepository {
       }
       if (candidate.source === 'backup') parsed.issues.unshift('recovered state from backup')
       parsed.issues.unshift(...recoveryIssues)
+      this.lastPersistedAt = inspected.mtimeMs
       return { parsed, source: candidate.source }
     }
     const parsed = parsePersistedState(null)
@@ -96,25 +98,7 @@ export class MetadataRepository {
       expectedMtimeMs: current?.mtimeMs,
     })
     if (!saved.ok) throw new Error(`state save failed: ${resultMessage(saved)}`)
-  }
-
-  // Backup means recovery of latest available draft bytes, not historical rollback.
-  // Refuse cleanup if either copy cannot be fully validated.
-  async referencedDraftIds(): Promise<Set<string>> {
-    const ids = new Set<string>()
-    for (const path of [this.path, this.backupPath]) {
-      const current = await readCurrentText(path, this.maxBytes)
-      if (!current) continue
-      const raw: unknown = JSON.parse(current.text)
-      const parsed = parsePersistedState(raw)
-      if (parsed.quarantined || parsed.migrated || parsed.issues.length > 0) {
-        throw new Error('draft cleanup deferred: metadata references could not be validated')
-      }
-      for (const reference of parsed.value.documentRefs) {
-        if (reference.dirty) ids.add(reference.id)
-      }
-    }
-    return ids
+    this.lastPersistedAt = saved.mtimeMs
   }
 
   private async initializeDirectory(): Promise<void> {
@@ -139,14 +123,6 @@ export class DraftRepository {
     await mkdir(this.directory, { recursive: true, mode: 0o700 })
   }
 
-  async write(id: string, content: string): Promise<void> {
-    validateDocumentId(id)
-    if (Buffer.byteLength(content) > this.maxBytes) throw new Error('draft too large')
-    await this.initialize()
-    const result = await saveTextAtomically({ targetPath: this.pathFor(id), content })
-    if (!result.ok) throw new Error(`draft write failed: ${resultMessage(result)}`)
-  }
-
   async read(id: string): Promise<string | null> {
     validateDocumentId(id)
     await this.initialize()
@@ -154,22 +130,6 @@ export class DraftRepository {
     if (inspected.kind === 'missing') return null
     if (inspected.kind === 'invalid') throw new Error(inspected.error)
     return inspected.bytes.toString('utf8')
-  }
-
-  async delete(id: string): Promise<void> {
-    validateDocumentId(id)
-    await unlink(this.pathFor(id)).catch((error) => {
-      if (!isNodeError(error) || error.code !== 'ENOENT') throw error
-    })
-  }
-
-  async cleanup(referencedIds: ReadonlySet<string>): Promise<void> {
-    await this.initialize()
-    for (const entry of await readdir(this.directory, { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.endsWith('.txt')) continue
-      const id = entry.name.slice(0, -4)
-      if (DOCUMENT_ID_PATTERN.test(id) && !referencedIds.has(id)) await this.delete(id)
-    }
   }
 
   private pathFor(id: string): string {

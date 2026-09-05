@@ -1,0 +1,61 @@
+{
+  "applicationAsarSha256": "e3a10695a7a455b9b5a8fc041075d00962224ecfc2b476d9ba536a43e0c8843b",
+  "packagedRuntime": {
+    "startTime": "2026-09-05T03:42:34.732Z",
+    "duration": 116823.539,
+    "expected": 21,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "installedRuntime": {
+    "startTime": "2026-09-05T03:47:30.285Z",
+    "duration": 48186.503000000004,
+    "expected": 9,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "installation": {
+    "version": "1.1.0",
+    "packagesUpgraded": [
+      "teleprompt"
+    ],
+    "packagesAdded": 0,
+    "packagesRemoved": 0,
+    "dpkgVerifyExitCode": 0,
+    "developmentSandboxHelperOverride": false
+  },
+  "fuse": {
+    "startedAt": "2026-09-05T03:47:29.484Z",
+    "imageName": "Teleprompt-1.1.0-x86_64.AppImage",
+    "imageSha256": "c8a26115624a2f4f4ce2e5f8c9f085524468f5447919fcf3cfaac065a0e2a6f3",
+    "inputSha256": "ad44940a471bf9cc5e3c7be092092cbf90f649cb96a47084bf9ad38e403f351c",
+    "expectedArchiveHash": "e3a10695a7a455b9b5a8fc041075d00962224ecfc2b476d9ba536a43e0c8843b",
+    "mountedArchiveHash": "e3a10695a7a455b9b5a8fc041075d00962224ecfc2b476d9ba536a43e0c8843b",
+    "browserExecutesFromMount": true,
+    "runtime": {
+      "appVersion": "1.1.0",
+      "electronVersion": "43.1.1",
+      "nodeVersion": "24.18.0"
+    },
+    "playbackAndSourceIntegrity": true,
+    "automaticallyUnmounted": true,
+    "passed": true
+  },
+  "kde": {
+    "startedAt": "2026-09-05T03:44:20.077Z",
+    "appAsarSha256": "e3a10695a7a455b9b5a8fc041075d00962224ecfc2b476d9ba536a43e0c8843b",
+    "inputSha256": "ad44940a471bf9cc5e3c7be092092cbf90f649cb96a47084bf9ad38e403f351c",
+    "compositingActive": "true",
+    "hotkeyStatus": {
+      "failed": []
+    },
+    "globalPlaybackShortcut": true,
+    "globalOverlayShortcut": true,
+    "clickBlockedWhenDisabled": true,
+    "clickThroughWhenEnabled": true,
+    "passed": true
+  },
+  "scope": "KWin 5.27.5 using llvmpipe OpenGL on an isolated Xvfb display/private D-Bus; no live-desktop/GPU/Wayland acceptance claim."
+}

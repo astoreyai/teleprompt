@@ -1,15 +1,12 @@
 import { app, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
-import { randomUUID } from 'node:crypto'
-import { basename, extname, parse } from 'node:path'
+import { basename } from 'node:path'
 import type { DocumentContent, DocumentId } from '../shared/contracts.js'
 import type { OverlayGeometry, PreferencePatch, RendererRole } from '../shared/ipc.js'
-import { MAX_DOCUMENT_BYTES } from '../shared/text.js'
 import { DEFAULT_HOTKEYS, type HotkeyCommand } from '../shared/types.js'
 import type { AppStore } from './application/app-store.js'
 import type { AppController } from './application/controller.js'
 import { exportablePreferences, sanitizePreferencePatch } from './application/preferences.js'
 import type { DocumentImportService } from './documents/import-service.js'
-import type { DocumentSaveService } from './documents/save-service.js'
 import { saveTextAtomically } from './files/atomic-write.js'
 import { supportedExtensions } from './files/file-policy.js'
 import { readBoundedRegularFile } from './files/safe-reader.js'
@@ -38,24 +35,17 @@ export type IpcDependencies = {
   store: AppStore
   controller: AppController
   importer: DocumentImportService
-  saver: DocumentSaveService
   hotkeys: HotkeyManager
   pacing: PacingService
 }
 
 const registeredChannels = new Set<IpcChannel>()
-let closingPhase: 'open' | 'flushing' | 'draining' = 'open'
+let closingPhase: 'open' | 'draining' = 'open'
 let importGeneration = 0
 const inFlight = new Set<Promise<unknown>>()
-let pendingEditorFlush: {
-  id: string
-  senderId: number
-  promise: Promise<boolean>
-  finish(ok: boolean): void
-} | null = null
 
-export function setIpcClosing(phase: 'open' | 'flushing' | 'draining'): void {
-  if (phase === 'flushing' && closingPhase === 'open') importGeneration += 1
+export function setIpcClosing(phase: 'open' | 'draining'): void {
+  if (phase === 'draining' && closingPhase === 'open') importGeneration += 1
   closingPhase = phase
   sendControlsEvent('app:closing', phase !== 'open')
 }
@@ -63,33 +53,6 @@ export function setIpcClosing(phase: 'open' | 'flushing' | 'draining'): void {
 export function cancelIpcImports(dependencies: IpcDependencies): void {
   importGeneration += 1
   dependencies.importer.cancelPending()
-}
-
-export function requestEditorFlush(): Promise<boolean> {
-  if (pendingEditorFlush) return pendingEditorFlush.promise
-  const controls = getWindows().controls
-  if (!controls || controls.isDestroyed()) return Promise.resolve(true)
-  const contents = controls.webContents
-  if (contents.isDestroyed() || contents.isCrashed()) return Promise.resolve(true)
-  if (contents.isLoadingMainFrame()) return Promise.resolve(false)
-  let resolveFlush!: (ok: boolean) => void
-  const promise = new Promise<boolean>((resolve) => { resolveFlush = resolve })
-  const id = randomUUID()
-  const finish = (ok: boolean) => {
-    if (pendingEditorFlush?.id !== id) return
-    clearTimeout(timer)
-    contents.removeListener('destroyed', onGone)
-    contents.removeListener('render-process-gone', onGone)
-    pendingEditorFlush = null
-    resolveFlush(ok)
-  }
-  const onGone = () => finish(false)
-  const timer = setTimeout(() => finish(false), 5000)
-  pendingEditorFlush = { id, senderId: contents.id, promise, finish }
-  contents.once('destroyed', onGone)
-  contents.once('render-process-gone', onGone)
-  try { contents.send('editor:flush', id) } catch { finish(false) }
-  return promise
 }
 
 export async function drainIpcCommands(): Promise<void> {
@@ -102,13 +65,6 @@ function assertMutationOpen(): void {
 
 export function registerIpc(dependencies: IpcDependencies): void {
   if (registeredChannels.size > 0) throw new Error('IPC is already registered')
-  secureHandle('editor:flushed', dependencies, (event, raw) => {
-    const request = requireRecord(raw)
-    const id = requireString(request.requestId, 'requestId', 128)
-    if (pendingEditorFlush?.id === id && pendingEditorFlush.senderId === event.sender.id) {
-      pendingEditorFlush.finish(requireBoolean(request.ok))
-    }
-  })
   let dragSession: {
     startScreenX: number
     startScreenY: number
@@ -135,7 +91,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
         hasStartupIssues: dependencies.store.getIssues().length > 0,
       }
     }
-    return { snapshot, activeDocument, startupIssues: dependencies.store.getIssues(), unresolvedDocuments: dependencies.store.getUnresolvedDocuments() }
+    return { snapshot, activeDocument, storageStatus: dependencies.store.getStorageStatus(), startupIssues: dependencies.store.getIssues(), unresolvedDocuments: dependencies.store.getUnresolvedDocuments() }
   })
 
   secureHandle('documents:open', dependencies, async () => {
@@ -181,20 +137,6 @@ export function registerIpc(dependencies: IpcDependencies): void {
     return importOne(dependencies, requirePath(raw))
   })
 
-  secureHandle('documents:create', dependencies, async (_event, raw) => {
-    const request = requireRecord(raw)
-    const name = requireString(request.name, 'name', 200)
-    const content = requireContent(request.content)
-    if (Buffer.byteLength(content, 'utf8') > MAX_DOCUMENT_BYTES) throw new Error('document exceeds the 10 MiB limit')
-    const format = request.format
-    if (format !== 'text' && format !== 'markdown' && format !== 'fountain') {
-      throw new Error('invalid create format')
-    }
-    const document = await dependencies.store.createDocument(name, content, format)
-    publish(dependencies, true)
-    return document
-  })
-
   secureHandle('documents:select', dependencies, (_event, raw) => {
     const id = requireId(raw)
     const ok = dependencies.controller.selectDocument(id)
@@ -209,71 +151,15 @@ export function registerIpc(dependencies: IpcDependencies): void {
     const request = requireRecord(raw)
     const result = await dependencies.store.removeDocument(
       requireId(request.id),
-      request.discardDirty === true,
     )
     if (result.ok) publish(dependencies, true)
     return result
-  })
-
-  secureHandle('documents:update', dependencies, async (_event, raw) => {
-    const request = requireRecord(raw)
-    const content = requireContent(request.content)
-    if (Buffer.byteLength(content, 'utf8') > MAX_DOCUMENT_BYTES) {
-      return { ok: false, reason: 'too-large' } as const
-    }
-    const result = await dependencies.store.updateDocument({
-      id: requireId(request.id),
-      expectedRevision: requireInteger(request.expectedRevision, 0, Number.MAX_SAFE_INTEGER),
-      content,
-    })
-    if (result.ok) publish(dependencies, true)
-    return result
-  })
-
-  secureHandle('documents:save', dependencies, async (_event, raw) => {
-    const request = requireRecord(raw)
-    const id = requireId(request.id)
-    const forceSaveAs = request.saveAs === true
-    const document = dependencies.store.getDocument(id)
-    if (!document) return { ok: false, reason: 'not-found' }
-    let targetPath: string | undefined
-    if (document.saveMode === 'save-as' || forceSaveAs) {
-      const stem = parse(document.name).name || 'teleprompt-script'
-      const extension = forceSaveAs && document.saveMode === 'overwrite'
-        ? (extname(document.name) || '.txt')
-        : '.md'
-      const result = await dialog.showSaveDialog({
-        title: forceSaveAs ? 'Save script copy' : 'Save extracted script as text',
-        defaultPath: `${stem}${forceSaveAs ? '-copy' : ''}${extension}`,
-        filters: [
-          { name: 'Markdown', extensions: ['md'] },
-          { name: 'Plain text', extensions: ['txt'] },
-          { name: 'Fountain', extensions: ['fountain'] },
-        ],
-      })
-      if (result.canceled || !result.filePath) return { ok: false, reason: 'cancelled' }
-      assertMutationOpen()
-      targetPath = result.filePath
-    }
-    const saved = await dependencies.store.saveDocument(id, dependencies.saver, targetPath)
-    if (!saved.ok) {
-      if (saved.reason === 'storage-failed') {
-        publish(dependencies, true)
-        return saved
-      }
-      const reason = saved.reason === 'save-as-required' ? 'invalid-target' : saved.reason
-      return { ok: false, reason, ...('error' in saved ? { error: saved.error } : {}) }
-    }
-    publish(dependencies, true)
-    const meta = dependencies.store.getSnapshot().documents.find((item) => item.id === id)
-    return meta ? { ok: true, document: meta } : { ok: false, reason: 'not-found' }
   })
 
   secureHandle('documents:reload', dependencies, async (_event, raw) => {
     const request = requireRecord(raw)
     const result = await dependencies.store.reloadDocument(
       requireId(request.id),
-      request.discardDirty === true,
       dependencies.importer,
     )
     if (result.ok) publish(dependencies, true)
@@ -377,7 +263,6 @@ export function registerIpc(dependencies: IpcDependencies): void {
       const record = requireRecord(raw)
       if (record.version !== 1) return { ok: false, error: 'unsupported preference version' }
       const patch = sanitizePreferencePatch(record.preferences)
-      delete patch.editMode
       dependencies.store.patchState(patch)
       const bindings = sanitizeHotkeys(record.hotkeyBindings)
       if (bindings) dependencies.hotkeys.rebind(bindings)
@@ -489,45 +374,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
     resizeSession = null
   })
 
-  secureHandle('overlay:openEditor', dependencies, () => {
-    dependencies.controller.pause()
-    dependencies.store.patchState({ editMode: true })
-    focusControls()
-    broadcastSnapshot(dependencies.store.getSnapshot())
-  })
-
   secureHandle('controls:focus', dependencies, () => focusControls())
-
-  secureHandle('voice:grantConsent', dependencies, async () => {
-    dependencies.controller.grantVoiceConsent()
-    await dependencies.store.flush()
-    broadcastSnapshot(dependencies.store.getSnapshot())
-  })
-
-  secureHandle('voice:revokeConsent', dependencies, async () => {
-    dependencies.controller.revokeVoiceConsent()
-    await dependencies.store.flush()
-    broadcastSnapshot(dependencies.store.getSnapshot())
-  })
-
-  secureHandle('voice:request', dependencies, (_event, raw) => {
-    const result = dependencies.controller.requestVoice(requireBoolean(raw))
-    broadcastSnapshot(dependencies.store.getSnapshot())
-    return result
-  })
-
-  secureHandle('voice:status', dependencies, (_event, raw) => {
-    const request = requireRecord(raw)
-    const status = request.status
-    if (status !== 'off' && status !== 'starting' && status !== 'active' && status !== 'error') {
-      throw new Error('invalid voice status')
-    }
-    dependencies.controller.reportVoiceStatus(
-      status,
-      request.error === undefined ? undefined : requireString(request.error, 'voice error', 500),
-    )
-    broadcastSnapshot(dependencies.store.getSnapshot())
-  })
 
   secureHandle('clicker:setArmed', dependencies, (_event, raw) => {
     dependencies.hotkeys.setClickerArmed(requireBoolean(raw))
@@ -559,7 +406,6 @@ export function registerIpc(dependencies: IpcDependencies): void {
 }
 
 export function unregisterIpc(): void {
-  pendingEditorFlush?.finish(false)
   for (const channel of registeredChannels) ipcMain.removeHandler(channel)
   registeredChannels.clear()
 }
@@ -600,14 +446,11 @@ function secureHandle(
     })
     if (!allowed) throw new Error('unauthorized IPC request')
     if (closingPhase !== 'open') {
-      const allowedWhileClosing = channel === 'editor:flushed' || channel === 'app:bootstrap' ||
-        (closingPhase === 'flushing' && channel === 'documents:update')
-      if (!allowedWhileClosing) throw new Error('Teleprompt is closing; this operation was cancelled')
+      if (channel !== 'app:bootstrap') throw new Error('Teleprompt is closing; this operation was cancelled')
     }
     const task = Promise.resolve().then(async () => {
-      if (channel !== 'editor:flushed') await dependencies.ready
-      if (closingPhase !== 'open' && channel !== 'editor:flushed' && channel !== 'app:bootstrap' &&
-          !(closingPhase === 'flushing' && channel === 'documents:update')) {
+      await dependencies.ready
+      if (closingPhase !== 'open' && channel !== 'app:bootstrap') {
         throw new Error('Teleprompt is closing; this operation was cancelled')
       }
       return handler(event, raw)
@@ -641,6 +484,7 @@ function publish(dependencies: IpcDependencies, includeDocument: boolean): void 
   broadcastSnapshot(dependencies.store.getSnapshot())
   if (includeDocument) broadcastActiveDocument(activeContent(dependencies.store))
   sendControlsEvent('storage:issues', dependencies.store.getIssues())
+  sendControlsEvent('storage:status', dependencies.store.getStorageStatus())
   sendControlsEvent('recovery:changed', dependencies.store.getUnresolvedDocuments())
 }
 
@@ -700,11 +544,6 @@ function requireGeometry(raw: unknown): OverlayGeometry {
     textH: requireInteger(request.textH, 0, 1_000_000),
     viewportH: requireInteger(request.viewportH, 0, 100_000),
   }
-}
-
-function requireContent(raw: unknown): string {
-  if (typeof raw !== 'string') throw new Error('invalid content')
-  return raw
 }
 
 function requirePoint(raw: unknown): [number, number] {

@@ -32,6 +32,7 @@ const recoveryDisposers = new WeakMap<BrowserWindow, () => void>()
 const recreatingWindows = new WeakSet<BrowserWindow>()
 const renderProcessGoneWindows = new WeakSet<BrowserWindow>()
 const readyWindows = new WeakSet<BrowserWindow>()
+const deliveredDocuments = new WeakMap<BrowserWindow, { id: string; revision: number } | null>()
 // The role survives BrowserWindow replacement, so crashes cannot reset their own budget.
 const recovery = {
   controls: { policy: new RendererRecoveryPolicy(), timer: null as ReturnType<typeof setTimeout> | null, stopped: false },
@@ -210,6 +211,7 @@ function attachCrashRecovery(win: BrowserWindow, role: RendererRole): () => void
   }
   const onGone = (_event: Electron.Event, details: Electron.RenderProcessGoneDetails) => {
     readyWindows.delete(win)
+    deliveredDocuments.delete(win)
     renderProcessGoneWindows.add(win)
     cancelTimer()
     logCrash(`render-process-gone[${role}] reason=${details.reason} exitCode=${details.exitCode}`)
@@ -225,6 +227,7 @@ function attachCrashRecovery(win: BrowserWindow, role: RendererRole): () => void
       state.timer = null
       pendingUnresponsive = false
       readyWindows.delete(win)
+      deliveredDocuments.delete(win)
       recover('unresponsive')
     }, 5_000)
   }
@@ -232,7 +235,10 @@ function attachCrashRecovery(win: BrowserWindow, role: RendererRole): () => void
     logCrash(`responsive[${role}]`)
     if (pendingUnresponsive) cancelTimer()
   }
-  const onStartedLoading = () => readyWindows.delete(win)
+  const onStartedLoading = () => {
+    readyWindows.delete(win)
+    deliveredDocuments.delete(win)
+  }
   const onLoaded = () => {
     if (win.isDestroyed() || windows[role] !== win) return
     renderProcessGoneWindows.delete(win)
@@ -252,6 +258,7 @@ function attachCrashRecovery(win: BrowserWindow, role: RendererRole): () => void
   return () => {
     cancelTimer()
     readyWindows.delete(win)
+    deliveredDocuments.delete(win)
     if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
       win.webContents.off('render-process-gone', onGone)
       win.webContents.off('unresponsive', onUnresponsive)
@@ -331,7 +338,16 @@ export function broadcastSnapshot(snapshot: AppSnapshot): void {
 }
 
 export function broadcastActiveDocument(document: DocumentContent | null): void {
-  sendToAll('document:changed', document)
+  for (const win of [windows.overlay, windows.controls]) {
+    if (!win) continue
+    const previous = deliveredDocuments.get(win)
+    if (previous !== undefined && (document === null
+      ? previous === null
+      : previous?.id === document.id && previous.revision === document.revision)) continue
+    if (sendToWindow(win, 'document:changed', document)) {
+      deliveredDocuments.set(win, document ? { id: document.id, revision: document.revision } : null)
+    }
+  }
 }
 
 export function sendProgress(position: number): void {
@@ -343,25 +359,22 @@ export function sendOverlayGeometry(geometry: { textH: number; viewportH: number
 }
 
 export function sendControlsEvent(
-  channel: 'app:closing' | 'storage:issues' | 'recovery:changed',
+  channel: 'app:closing' | 'storage:issues' | 'storage:status' | 'recovery:changed',
   payload: unknown,
 ): void {
   sendToWindow(windows.controls, channel, payload)
 }
 
-function sendToAll(channel: string, payload: unknown): void {
-  sendToWindow(windows.overlay, channel, payload)
-  sendToWindow(windows.controls, channel, payload)
-}
-
-function sendToWindow(win: BrowserWindow | undefined, channel: string, payload: unknown): void {
+function sendToWindow(win: BrowserWindow | undefined, channel: string, payload: unknown): boolean {
   if (!win || win.isDestroyed() || win.webContents.isDestroyed() ||
-      renderProcessGoneWindows.has(win) || !readyWindows.has(win)) return
+      renderProcessGoneWindows.has(win) || !readyWindows.has(win)) return false
   try {
     win.webContents.send(channel, payload)
+    return true
   } catch (error) {
     // A renderer can exit between the readiness check and native send.
     logCrash(`renderer send failed[${channel}]: ${formatError(error)}`)
+    return false
   }
 }
 

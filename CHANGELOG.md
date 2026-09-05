@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 — 2026-09-05
+
+- Read and play local files with a bounded operator preview and the existing playback, appearance, cue, shortcut, and presentation settings.
+- Remove document editing, source saving, voice recognition, and their IPC APIs. Deny microphone permissions; preserve old recovery drafts for reading.
+- Load the selected file first, restore remaining files in the background, and show the actual last-successful metadata timestamp.
+- Avoid resending an unchanged script body when settings save; track successful delivery by document ID and revision for each window, resetting after reload or recovery.
+- Prevent concurrent directory replacement from redirecting Linux crash cleanup.
+- Wait for actual parser exit before releasing import capacity; escalate stuck workers to SIGKILL, sample parser RSS against 512 MiB, and enforce PDF output limits page by page.
+- Add genuine public document, native process, and captured application-state qualification. Record the matched five-minute memory comparison and remaining limits in the dated release audit.
+
 ## 1.0.3 — 2026-09-04
 
 - Refuse symlink directory roots during startup crash-artifact cleanup, preventing the reproduced deletion of unrelated JSON files.

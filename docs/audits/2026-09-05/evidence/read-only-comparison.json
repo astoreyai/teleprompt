@@ -1,0 +1,151 @@
+{
+  "method": "/proc/PID/smaps_rollup; descendants from every task/*/children",
+  "inputMethod": "Actual CLI file import, selection, reload, settings and playback through installed preload APIs",
+  "inputs": [
+    {
+      "name": "typescript.js",
+      "length": 9112572,
+      "bannerLength": 8059424,
+      "bytes": 9112572,
+      "mtime": "2026-07-19T03:36:09.038Z",
+      "sha256": "3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675"
+    },
+    {
+      "name": "typescript.d.ts",
+      "length": 588085,
+      "bannerLength": 485025,
+      "bytes": 588085,
+      "mtime": "2026-07-19T03:36:09.102Z",
+      "sha256": "e134052a6b1ded61693b4037f615dc72f14e2881e79c1ddbff6c514c8a516b05"
+    },
+    {
+      "name": "README.md",
+      "length": 6284,
+      "bannerLength": 6231,
+      "bytes": 6286,
+      "mtime": "2026-09-05T00:41:34.293Z",
+      "sha256": "e021087b084d55f7b0ec0d61b001d3e3fd4284521f740361e97ae023633af8af"
+    },
+    {
+      "name": "SECURITY.md",
+      "length": 3971,
+      "bannerLength": 3956,
+      "bytes": 3971,
+      "mtime": "2026-09-04T21:14:29.860Z",
+      "sha256": "ca006a2b1533d33cc2d7521430792c3b0179d1467f253701aedae372881a5f6a"
+    }
+  ],
+  "scope": "One matched pair on isolated Xvfb; no physical-compositor or long-term leak claim. Memory samples do not identify the active file.",
+  "runs": [
+    {
+      "version": "1.0.3",
+      "appAsarSha256": "fb906c12941a6c0ee377fd6da774f4196b677b62f877c1ece0c23225450ac42e",
+      "requestedDurationMs": 300000,
+      "elapsedMs": 305390,
+      "cycles": 203,
+      "passed": true,
+      "sourceFilesUnchanged": true,
+      "restoredSelectionAndSettings": true,
+      "peakPrivateBytes": 2221277184,
+      "iterationLatencyMs": {
+        "count": 203,
+        "median": 193.94237400000566,
+        "p95": 3682.0919859999995,
+        "max": 4208.969419999999
+      },
+      "selectionLatencyMs": {
+        "count": 203,
+        "median": 30.513486999989254,
+        "p95": 411.04398900002707,
+        "max": 448.62609199999133
+      },
+      "windows": [
+        {
+          "fromMs": 0,
+          "toMs": 60000,
+          "sampleCount": 117,
+          "minPrivateBytes": 189239296,
+          "medianPrivateBytes": 1095708672,
+          "maxPrivateBytes": 2221277184
+        },
+        {
+          "fromMs": 120000,
+          "toMs": 180000,
+          "sampleCount": 117,
+          "minPrivateBytes": 529534976,
+          "medianPrivateBytes": 857014272,
+          "maxPrivateBytes": 1516158976
+        },
+        {
+          "fromMs": 240000,
+          "toMs": 300000,
+          "sampleCount": 117,
+          "minPrivateBytes": 528809984,
+          "medianPrivateBytes": 1088806912,
+          "maxPrivateBytes": 1583833088
+        }
+      ],
+      "lastSixtySeconds": {
+        "fromMs": 241913,
+        "toMs": 301913,
+        "sampleCount": 117,
+        "medianPrivateBytes": 1076273152
+      }
+    },
+    {
+      "version": "1.1.0",
+      "appAsarSha256": "918e5a1428b426d8a247dcbcdea4c159b3ca4e0c423c19d6a14689eacc811e9c",
+      "requestedDurationMs": 300000,
+      "elapsedMs": 309469,
+      "cycles": 197,
+      "passed": true,
+      "sourceFilesUnchanged": true,
+      "restoredSelectionAndSettings": true,
+      "peakPrivateBytes": 1612922880,
+      "iterationLatencyMs": {
+        "count": 197,
+        "median": 194.09738399999333,
+        "p95": 3899.7940440000093,
+        "max": 5546.347754000017
+      },
+      "selectionLatencyMs": {
+        "count": 197,
+        "median": 30.605767000000924,
+        "p95": 441.63178599998355,
+        "max": 642.0151199999964
+      },
+      "windows": [
+        {
+          "fromMs": 0,
+          "toMs": 60000,
+          "sampleCount": 117,
+          "minPrivateBytes": 181760000,
+          "medianPrivateBytes": 1034907648,
+          "maxPrivateBytes": 1562902528
+        },
+        {
+          "fromMs": 120000,
+          "toMs": 180000,
+          "sampleCount": 117,
+          "minPrivateBytes": 533303296,
+          "medianPrivateBytes": 1192280064,
+          "maxPrivateBytes": 1612922880
+        },
+        {
+          "fromMs": 240000,
+          "toMs": 300000,
+          "sampleCount": 116,
+          "minPrivateBytes": 528146432,
+          "medianPrivateBytes": 967155712.0,
+          "maxPrivateBytes": 1559367680
+        }
+      ],
+      "lastSixtySeconds": {
+        "fromMs": 245403,
+        "toMs": 305403,
+        "sampleCount": 117,
+        "medianPrivateBytes": 977399808
+      }
+    }
+  ]
+}

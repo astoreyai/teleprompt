@@ -1,43 +1,34 @@
-import { readFileSync, statSync } from 'node:fs'
-import { resolve, basename } from 'node:path'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { DocumentImportService } from '../documents/import-service.js'
+import { parseDocumentBytes } from '../parser/parser-core.js'
 import { createWorkspace } from './workspace.js'
 
-// Provenance: repository Markdown source files, without generated content.
-const readmePath = resolve('README.md')
-const securityPath = resolve('SECURITY.md')
-const readme = readFileSync(readmePath, 'utf8')
-const security = readFileSync(securityPath, 'utf8')
+const importer = new DocumentImportService({
+  parse: (format, bytes, maxOutputChars) => parseDocumentBytes(format, bytes, { maxOutputChars }),
+})
 
-describe('document workspace', () => {
-  it('uses stable IDs so a delayed edit can never target a neighboring document', () => {
+describe('document workspace using real imported repository documents', () => {
+  it('uses stable IDs so a delayed reload cannot target a neighboring document', async () => {
     const workspace = createWorkspace()
-    const first = workspace.addDocument({
-      name: basename(readmePath), sourcePath: null, format: 'markdown',
-      content: readme, sourceMtimeMs: null,
-    })
-    const second = workspace.addDocument({
-      name: basename(securityPath), sourcePath: null, format: 'markdown',
-      content: security, sourceMtimeMs: null,
-    })
+    const readme = await importer.loadPath(resolve('README.md'))
+    const security = await importer.loadPath(resolve('SECURITY.md'))
+    const first = workspace.addDocument(readme)
+    const second = workspace.addDocument(security)
     workspace.removeDocument(first.id)
-    expect(workspace.updateDocument({ id: first.id, expectedRevision: first.revision, content: security }))
-      .toEqual({ ok: false, reason: 'not-found' })
-    expect(workspace.getDocument(second.id)?.content).toBe(security)
+    expect(workspace.replaceDocument(first.id, readme)).toBeNull()
+    expect(workspace.getDocument(second.id)?.content).toBe(security.content)
   })
 
-  it('rejects stale concurrent edits and exposes content separately from snapshots', () => {
+  it('increments reload revisions and exposes content separately from snapshots', async () => {
     const workspace = createWorkspace()
-    const document = workspace.addDocument({
-      name: basename(readmePath), sourcePath: readmePath, format: 'markdown',
-      content: readme, sourceMtimeMs: statSync(readmePath).mtimeMs,
-    })
-    expect(workspace.updateDocument({ id: document.id, expectedRevision: document.revision, content: security }))
-      .toEqual({ ok: true, revision: document.revision + 1 })
-    expect(workspace.updateDocument({ id: document.id, expectedRevision: document.revision, content: readme }))
-      .toEqual({ ok: false, reason: 'conflict', currentRevision: document.revision + 1 })
-    expect(workspace.getSnapshot().documents.every((meta) => !('content' in meta))).toBe(true)
-    expect(workspace.getActiveDocument()).toMatchObject({ id: document.id, revision: document.revision + 1, content: security })
+    const imported = await importer.loadPath(resolve('README.md'))
+    const document = workspace.addDocument(imported)
+    expect(workspace.replaceDocument(document.id, await importer.loadPath(imported.sourcePath)))
+      .toMatchObject({ id: document.id, revision: document.revision + 1 })
+    expect(workspace.getSnapshot().documents.every(meta => !('content' in meta))).toBe(true)
+    expect(workspace.getActiveDocument()).toMatchObject({ id: document.id,
+      revision: document.revision + 1, content: imported.content })
   })
 
   it('cannot enter playing state without an active document', () => {

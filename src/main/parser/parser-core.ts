@@ -42,8 +42,23 @@ export async function parseDocumentBytes(
       const { PDFParse } = await import('pdf-parse')
       const parser = new PDFParse({ data: new Uint8Array(bytes), useSystemFonts: false, isEvalSupported: false })
       try {
-        const result = await parser.getText()
-        content = (result.text ?? '').trim()
+        const pages: string[] = []
+        let totalPages = 1
+        let length = 0
+        for (let page = 1; page <= totalPages; page += 1) {
+          // getText() otherwise retains every page before exposing its result.
+          // Keep the supported extractor's formatting, checking each page before
+          // retaining another. A single page still requires native containment.
+          const result = await parser.getText({ partial: [page] })
+          totalPages = result.total
+          let text = result.text ?? ''
+          if (page === 1) text = text.trimStart()
+          if (page === totalPages) text = text.trimEnd()
+          length += text.length
+          if (length > options.maxOutputChars) throw new Error('extracted text too large')
+          pages.push(text)
+        }
+        content = pages.join('')
       } finally {
         await parser.destroy()
       }

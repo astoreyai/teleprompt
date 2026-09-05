@@ -1,94 +1,34 @@
-import { describe, expect, it, vi } from 'vitest'
-import { ParserSupervisor, type ParserWorkerHandle } from './supervisor.js'
+import { execFile } from 'node:child_process'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
+import { expect, it } from 'vitest'
 
-class FakeWorker implements ParserWorkerHandle {
-  killed = false
-  throwOnKill = false
-  sent: unknown[] = []
-  private messageListeners = new Set<(message: unknown) => void>()
-  private exitListeners = new Set<(code: number) => void>()
-
-  postMessage(message: unknown): void {
-    this.sent.push(message)
+// Execute the same native-process qualification from the unit gate. This runs
+// production Electron utility workers with genuine public documents, including
+// kernel SIGSTOP/SIGKILL. No fake IPC messages, worker handles, or timers.
+// Malformed/oversized *protocol responses* remain an explicit coverage gap:
+// the production worker rejects output before it can emit such a response.
+it('qualifies supervisor outcomes against actual Electron utility processes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'teleprompt-supervisor-native-'))
+  try {
+    const { stdout } = await promisify(execFile)('xvfb-run', ['-a',
+      resolve('node_modules/.bin/playwright'), 'test', 'e2e/parser-resource.spec.ts',
+      '--retries=0', '--reporter=json', `--output=${directory}`], {
+      cwd: process.cwd(),
+      env: { ...process.env,
+        TELEPROMPT_REAL_PDF: resolve('test/fixtures/public/us-constitution.pdf'),
+        TELEPROMPT_REAL_DOCX: resolve('test/fixtures/public/dwi-privacy-notice.docx') },
+      timeout: 45_000,
+      maxBuffer: 4 * 1024 * 1024,
+    })
+    const report = JSON.parse(stdout)
+    expect(report.stats.unexpected).toBe(0)
+    expect(report.stats.skipped).toBe(0)
+    expect(report.stats.flaky).toBe(0)
+    expect(report.stats.expected).toBe(7)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
   }
-
-  onMessage(listener: (message: unknown) => void): () => void {
-    this.messageListeners.add(listener)
-    return () => this.messageListeners.delete(listener)
-  }
-
-  onExit(listener: (code: number) => void): () => void {
-    this.exitListeners.add(listener)
-    return () => this.exitListeners.delete(listener)
-  }
-
-  kill(): void {
-    this.killed = true
-    if (this.throwOnKill) throw new Error('already gone')
-  }
-
-  respond(message: unknown): void {
-    for (const listener of this.messageListeners) listener(message)
-  }
-
-  exit(code: number): void {
-    for (const listener of this.exitListeners) listener(code)
-  }
-}
-
-describe('parser supervisor', () => {
-  it('returns validated parser output and terminates the one-shot worker', async () => {
-    const worker = new FakeWorker()
-    const supervisor = new ParserSupervisor(() => worker, { timeoutMs: 1000 })
-    const pending = supervisor.parse('text', Buffer.from('input'), 100)
-    worker.respond({ ok: true, content: 'output' })
-    await expect(pending).resolves.toBe('output')
-    expect(worker.killed).toBe(true)
-  })
-
-  it('kills timed-out workers', async () => {
-    vi.useFakeTimers()
-    const worker = new FakeWorker()
-    const supervisor = new ParserSupervisor(() => worker, { timeoutMs: 100 })
-    const pending = supervisor.parse('text', Buffer.from('input'), 100)
-    const assertion = expect(pending).rejects.toThrow('parser timed out')
-    await vi.advanceTimersByTimeAsync(101)
-    await assertion
-    expect(worker.killed).toBe(true)
-    vi.useRealTimers()
-  })
-
-  it('rejects worker crashes and oversized or malformed responses', async () => {
-    const crashed = new FakeWorker()
-    const crashPending = new ParserSupervisor(() => crashed).parse('text', Buffer.from('x'), 10)
-    crashed.exit(9)
-    await expect(crashPending).rejects.toThrow('parser process exited with code 9')
-
-    const oversized = new FakeWorker()
-    const oversizedPending = new ParserSupervisor(() => oversized).parse(
-      'text',
-      Buffer.from('x'),
-      3,
-    )
-    oversized.respond({ ok: true, content: '1234' })
-    await expect(oversizedPending).rejects.toThrow('parser returned oversized output')
-
-    const malformed = new FakeWorker()
-    const malformedPending = new ParserSupervisor(() => malformed).parse(
-      'text',
-      Buffer.from('x'),
-      10,
-    )
-    malformed.respond({ surprise: true })
-    await expect(malformedPending).rejects.toThrow('invalid parser response')
-  })
-
-  it('settles the parse even when cleanup races an already-dead worker', async () => {
-    const worker = new FakeWorker()
-    worker.throwOnKill = true
-    const pending = new ParserSupervisor(() => worker).parse('text', Buffer.from('x'), 10)
-
-    expect(() => worker.respond({ ok: true, content: 'safe' })).not.toThrow()
-    await expect(pending).resolves.toBe('safe')
-  })
-})
+}, 60_000)

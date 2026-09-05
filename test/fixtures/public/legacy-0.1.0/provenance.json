@@ -1,0 +1,22 @@
+{
+  "origin": "Official Teleprompt v0.1.0 release, fresh isolated profile, genuine repository README",
+  "capturedAt": "2026-09-05T03:19:37.323Z",
+  "releaseUrl": "https://github.com/astoreyai/teleprompt/releases/tag/v0.1.0",
+  "assetUrl": "https://github.com/astoreyai/teleprompt/releases/download/v0.1.0/teleprompt_0.1.0_amd64.deb",
+  "assetSha256": "48374032f736969a17fd7ac657d2de113b9e5ce397a077f059d5868b40a366d3",
+  "applicationSha256": "455fe11b544e9c3161d608f68fc939c24c5bdfa8d0e7b1cd7ede463b41632cc9",
+  "sourceInput": {
+    "name": "README.md",
+    "sha256": "ad44940a471bf9cc5e3c7be092092cbf90f649cb96a47084bf9ad38e403f351c"
+  },
+  "trigger": "Launched the unmodified extracted official app with an actual README.txt, confirmed live content and persisted file path, closed every native window normally.",
+  "transformation": "None. JSON bytes copied from the original app after its will-quit handler; only a temporary public-document path appears in metadata.",
+  "artifacts": [
+    {
+      "name": "teleprompt-state.json",
+      "bytes": 1515,
+      "sha256": "401e6a0de82fe6542f474a7ce8c4b78788c8ad2b1b2363099ec6cca83049169e",
+      "sourceMtime": "2026-09-05T03:19:37.230Z"
+    }
+  ]
+}

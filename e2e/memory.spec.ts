@@ -1,62 +1,59 @@
-import { expect, test, type Page } from '@playwright/test'
-import { spawnSync } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { expect, test } from '@playwright/test'
+import { createHash } from 'node:crypto'
+import { copyFile, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { launch, surface, stop, readme } from './harness.js'
+import { basename, join, resolve } from 'node:path'
+import { launch, surface, stop } from './harness.js'
 import { processTreeMemory } from './process-memory.js'
 
-async function paste(page: Page, value: string) {
-  const result = spawnSync('xclip', ['-selection', 'clipboard', '-in'],
-    { input: value, stdio: ['pipe', 'ignore', 'ignore'] })
-  if (result.error) throw result.error
-  if (result.status !== 0) throw new Error(`xclip failed with status ${result.status}`)
-  const editor = page.getByRole('textbox', { name: 'Edit README.md' })
-  await editor.focus()
-  await page.keyboard.press('Control+A')
-  await page.keyboard.press('Control+V')
-  await expect(editor).toHaveValue(value)
-  await editor.blur()
-  await expect.poll(async () => page.evaluate(async () => (await window.controlsApi.bootstrap()).activeDocument?.content)).toBe(value)
-}
-
 for (const restart of [false, true]) {
-  test(`large-to-small ${restart ? 'restored' : 'new'} document transitions release unused memory without discarding native Undo`, async () => {
-    test.setTimeout(60000)
-    if (!process.env.TELEPROMPT_TEST_DISPLAY || process.env.TELEPROMPT_TEST_DISPLAY !== process.env.DISPLAY) {
-      throw new Error('Use npm run test:e2e so clipboard operations stay in an isolated Xvfb display')
-    }
+  test(`large-to-small ${restart ? 'restored' : 'new'} file selections release unused memory and preserve source bytes`, async () => {
+    test.setTimeout(60_000)
     const directory = await mkdtemp(join(tmpdir(), 'teleprompt-memory-'))
-    const large = await readFile(resolve('node_modules/typescript/lib/typescript.js'), 'utf8')
-    const declarations = await readFile(resolve('node_modules/typescript/lib/typescript.d.ts'), 'utf8')
-    let app = await launch(directory)
+    const originals = ['node_modules/typescript/lib/typescript.js', 'node_modules/typescript/lib/typescript.d.ts', 'README.md', 'SECURITY.md'].map(path => resolve(path))
+    const inputs = await Promise.all(originals.map(async (path) => {
+      const bytes = await readFile(path)
+      const info = await stat(path)
+      const copy = join(directory, `${basename(path)}.txt`)
+      await copyFile(path, copy)
+      return { name: basename(path), original: path, path: copy, length: bytes.toString('utf8').length,
+        bytes: bytes.length, mtime: info.mtime.toISOString(), sha256: createHash('sha256').update(bytes).digest('hex') }
+    }))
+    let app = await launch(directory, inputs.map(input => input.path))
     try {
       let controls = await surface(app, 'controls')
       let overlay = await surface(app, 'overlay')
-      await controls.evaluate((content) => window.controlsApi.createDocument('typescript.js', content, 'text'), large)
-      await expect.poll(() => overlay.locator('.overlay__text').evaluate(element => element.textContent?.length), { timeout: 15000 }).toBe(large.length)
+      await expect.poll(async () => (await controls.evaluate(() => window.controlsApi.bootstrap())).snapshot.documents.length, { timeout: 30_000 }).toBe(inputs.length)
+      const documents = (await controls.evaluate(() => window.controlsApi.bootstrap())).snapshot.documents
+      const large = documents.find(document => document.sourcePath === inputs[0].path)!
+      const small = documents.find(document => document.sourcePath === inputs[2].path)!
+      expect((await controls.evaluate(id => window.controlsApi.selectDocument(id), large.id)).ok).toBe(true)
+      await expect.poll(() => overlay.locator('.overlay__text').evaluate(element => element.textContent?.length), { timeout: 15_000 }).toBe(inputs[0].length)
       if (restart) {
         await stop(app)
         app = await launch(directory)
         controls = await surface(app, 'controls')
         overlay = await surface(app, 'overlay')
-        await expect.poll(() => overlay.locator('.overlay__text').evaluate(element => element.textContent?.length), { timeout: 15000 }).toBe(large.length)
+        await expect.poll(() => overlay.locator('.overlay__text').evaluate(element => element.textContent?.length), { timeout: 15_000 }).toBe(inputs[0].length)
+        expect((await controls.evaluate(() => window.controlsApi.bootstrap())).snapshot.activeDocumentId).toBe(large.id)
       }
-      await controls.evaluate((content) => window.controlsApi.createDocument('README.md', content, 'markdown'), readme)
-      await expect(overlay.locator('.overlay__text')).toContainText('Teleprompt')
-      await expect.poll(async () => (await processTreeMemory(app.process.pid!)).reduce((sum, p) => sum + p.privateBytes, 0),
-        { timeout: 15000, message: 'private memory falls below 512 MiB after leaving the 9 MB document' }).toBeLessThan(512 * 1024 * 1024)
-      await controls.evaluate(() => window.controlsApi.updatePreferences({ editMode: true }))
-      await paste(controls, declarations)
-      await paste(controls, readme)
-      // Observe beyond the deferred release, then exercise the actual native Undo/Redo stack.
-      await new Promise(resolveWait => setTimeout(resolveWait, 750))
-      const editor = controls.getByRole('textbox', { name: 'Edit README.md' })
-      await editor.focus()
-      await controls.keyboard.press('Control+Z')
-      await expect(editor).toHaveValue(declarations)
-      await controls.keyboard.press('Control+Shift+Z')
-      await expect(editor).toHaveValue(readme)
+      expect((await controls.evaluate(id => window.controlsApi.selectDocument(id), small.id)).ok).toBe(true)
+      await expect.poll(() => overlay.locator('.overlay__text').evaluate(element => element.textContent?.length)).toBe(inputs[2].length)
+      let measured = 0
+      await expect.poll(async () => {
+        const processes = await processTreeMemory(app.process.pid!)
+        expect(processes.length).toBeGreaterThan(0)
+        measured = processes.reduce((sum, process) => sum + process.privateBytes, 0)
+        return measured
+      }, { timeout: 15_000, message: 'private memory falls below 512 MiB after leaving the 9 MB file' }).toBeLessThan(512 * 1024 * 1024)
+      for (const input of inputs) {
+        expect(createHash('sha256').update(await readFile(input.path)).digest('hex')).toBe(input.sha256)
+        expect(createHash('sha256').update(await readFile(input.original)).digest('hex')).toBe(input.sha256)
+      }
+      await test.info().attach('selection-memory', { contentType: 'application/json', body: JSON.stringify({
+        restart, privateBytesAfterSmallSelection: measured,
+        inputs: inputs.map(({ original, path, ...provenance }) => provenance),
+      }) })
       await stop(app)
     } finally {
       await stop(app).catch(() => undefined)

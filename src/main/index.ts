@@ -5,10 +5,9 @@ import { fileURLToPath } from 'node:url'
 import { AppStore } from './application/app-store.js'
 import { AppController } from './application/controller.js'
 import { DocumentImportService } from './documents/import-service.js'
-import { DocumentSaveService } from './documents/save-service.js'
 import { classifyDocumentPath } from './files/file-policy.js'
 import { HotkeyManager } from './hotkeys.js'
-import { cancelIpcImports, drainIpcCommands, loadPathOnStartup, registerIpc, requestEditorFlush, setIpcClosing, unregisterIpc, type IpcDependencies } from './ipc.js'
+import { cancelIpcImports, drainIpcCommands, loadPathOnStartup, registerIpc, setIpcClosing, unregisterIpc, type IpcDependencies } from './ipc.js'
 import { purgeOldCrashArtifacts } from './lifecycle/crash-retention.js'
 import { logCrash } from './log.js'
 import { PacingService } from './pacing.js'
@@ -19,13 +18,12 @@ import { installRendererProtocol, registerRendererScheme } from './platform/rend
 import {
   applyOverlayEffects,
   broadcastSnapshot,
+  broadcastActiveDocument,
   configureWindowRuntime,
   clampToDisplay,
   createControls,
   createOverlay,
   focusControls,
-  getRendererRole,
-  getRendererUrl,
   stopCursorPoll,
   stopTopReassertPoll,
   stopWindowRecovery,
@@ -112,7 +110,7 @@ async function bootstrap(): Promise<void> {
     timeoutMs: 10_000,
   })
   const importer = new DocumentImportService(supervisor)
-  const store = new AppStore({ metadata, drafts })
+  const store = new AppStore({ metadata, drafts, restoreInBackground: true })
   let initialized = false
   const ready = store.initialize(importer).then(() => { initialized = true })
   const controller = new AppController(store)
@@ -123,7 +121,6 @@ async function bootstrap(): Promise<void> {
     store,
     controller,
     importer,
-    saver: new DocumentSaveService(),
     hotkeys,
     pacing,
   }
@@ -147,8 +144,15 @@ async function bootstrap(): Promise<void> {
     onControlsClose: (window) => { void closeControlsGracefully(window) },
   })
 
-  installPermissionPolicy(store)
-  store.subscribeIssues(() => sendControlsEvent('storage:issues', store.getIssues()))
+  installPermissionPolicy()
+  store.subscribeIssues(() => {
+    sendControlsEvent('storage:issues', store.getIssues())
+    sendControlsEvent('storage:status', store.getStorageStatus())
+    sendControlsEvent('recovery:changed', store.getUnresolvedDocuments())
+    broadcastSnapshot(store.getSnapshot())
+    const active = store.getActiveDocument()
+    broadcastActiveDocument(active ? { id: active.id, revision: active.revision, content: active.content } : null)
+  })
   registerIpc(dependencies)
   // Show the existing loading UI while real recovery/import work runs. IPC
   // waits for hydration, so early commands cannot be erased by initialization.
@@ -177,42 +181,10 @@ async function bootstrap(): Promise<void> {
   })
 }
 
-function installPermissionPolicy(store: AppStore): void {
-  const allowed = (
-    contents: Electron.WebContents | null,
-    permission: string,
-    mediaTypes: readonly string[],
-    isMainFrame: boolean,
-  ): boolean => {
-    if (!contents || permission !== 'media' || !isMainFrame) return false
-    if (getRendererRole(contents) !== 'controls') return false
-    if (contents.getURL() !== getRendererUrl('controls')) return false
-    if (mediaTypes.length !== 1 || mediaTypes[0] !== 'audio') return false
-    const snapshot = store.getSnapshot()
-    return (
-      snapshot.voiceConsent &&
-      (snapshot.voiceStatus === 'starting' || snapshot.voiceStatus === 'active')
-    )
-  }
-
-  session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) => {
-    const mediaTypes = details.mediaType ? [details.mediaType] : []
-    return allowed(contents, permission, mediaTypes, details.isMainFrame)
-  })
-  session.defaultSession.setPermissionRequestHandler(
-    (contents, permission, callback, details) => {
-      const mediaTypes = 'mediaTypes' in details ? (details.mediaTypes ?? []) : []
-      const requestingUrl = 'requestingUrl' in details ? details.requestingUrl : undefined
-      callback(
-        allowed(
-          contents,
-          permission,
-          mediaTypes,
-          requestingUrl ? requestingUrl === contents.getURL() : true,
-        ),
-      )
-    },
-  )
+function installPermissionPolicy(): void {
+  // This application reads local files and has no microphone or device features.
+  session.defaultSession.setPermissionCheckHandler(() => false)
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
 }
 
 async function loadQueuedPaths(paths: string[]): Promise<void> {
@@ -244,10 +216,11 @@ app.on('before-quit', (event) => {
 })
 
 async function flushForClose(): Promise<void> {
-  setIpcClosing('flushing')
-  if (!(await requestEditorFlush())) throw new Error('The editor could not confirm that its latest text was saved.')
   setIpcClosing('draining')
-  if (dependencies) cancelIpcImports(dependencies)
+  if (dependencies) {
+    dependencies.store.cancelRestoration()
+    cancelIpcImports(dependencies)
+  }
   await withDeadline((async () => {
     await dependencies?.ready
     await drainIpcCommands()
@@ -264,7 +237,7 @@ async function quitGracefully(): Promise<void> {
       type: 'warning',
       title: 'Teleprompt could not finish saving',
       message: formatError(error),
-      detail: 'Keep Teleprompt open to preserve the editor text, or retry. Quitting now can lose changes that have not reached recovery storage.',
+      detail: 'Keep Teleprompt open and retry to save the latest playlist and settings. Source files are never modified.',
       buttons: ['Keep open', 'Try again', 'Quit without pending changes'],
       defaultId: 0,
       cancelId: 0,
@@ -298,9 +271,9 @@ async function closeControlsGracefully(window: BrowserWindow): Promise<void> {
     logCrash(`controls close flush failed: ${formatError(error)}`)
     await dialog.showMessageBox({
       type: 'warning',
-      title: 'The editor is still open',
+      title: 'Settings could not be saved',
       message: formatError(error),
-      detail: 'Resolve the save problem, then close the window again. Your current editor text has been kept open.',
+      detail: 'Resolve the settings storage problem, then close the window again. Source files are unchanged.',
       buttons: ['Keep open'],
     })
   } finally {

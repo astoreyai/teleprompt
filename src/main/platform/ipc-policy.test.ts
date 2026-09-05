@@ -1,3 +1,5 @@
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { IPC_POLICY, authorizeIpc } from './ipc-policy.js'
 
@@ -14,9 +16,9 @@ describe('IPC authorization manifest', () => {
   })
 
   it('authorizes only declared role, exact top-frame URL, and main frame', () => {
-    const expectedUrl = 'file:///app/out/renderer/controls.html'
+    const expectedUrl = 'teleprompt://app/controls.html'
     expect(
-      authorizeIpc('documents:save', {
+      authorizeIpc('documents:reload', {
         role: 'controls',
         frameUrl: expectedUrl,
         expectedUrl,
@@ -24,23 +26,23 @@ describe('IPC authorization manifest', () => {
       }),
     ).toBe(true)
     expect(
-      authorizeIpc('documents:save', {
+      authorizeIpc('documents:reload', {
         role: 'overlay',
-        frameUrl: 'file:///app/out/renderer/overlay.html',
-        expectedUrl: 'file:///app/out/renderer/overlay.html',
+        frameUrl: 'teleprompt://app/overlay.html',
+        expectedUrl: 'teleprompt://app/overlay.html',
         isMainFrame: true,
       }),
     ).toBe(false)
     expect(
-      authorizeIpc('documents:save', {
+      authorizeIpc('documents:reload', {
         role: 'controls',
-        frameUrl: 'file:///tmp/attacker/controls.html',
+        frameUrl: pathToFileURL(resolve('src/renderer/controls.html')).href,
         expectedUrl,
         isMainFrame: true,
       }),
     ).toBe(false)
     expect(
-      authorizeIpc('documents:save', {
+      authorizeIpc('documents:reload', {
         role: 'controls',
         frameUrl: expectedUrl,
         expectedUrl,

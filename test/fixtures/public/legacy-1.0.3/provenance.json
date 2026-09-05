@@ -1,0 +1,29 @@
+{
+  "origin": "Installed Teleprompt 1.0.3, fresh isolated profile, genuine repository documents",
+  "capturedAt": "2026-09-05T03:17:19.072Z",
+  "applicationSha256": "fb906c12941a6c0ee377fd6da774f4196b677b62f877c1ece0c23225450ac42e",
+  "sourceInput": {
+    "name": "README.md",
+    "sha256": "e021087b084d55f7b0ec0d61b001d3e3fd4284521f740361e97ae023633af8af"
+  },
+  "replacementInput": {
+    "name": "SECURITY.md",
+    "sha256": "ca006a2b1533d33cc2d7521430792c3b0179d1467f253701aedae372881a5f6a"
+  },
+  "trigger": "Imported README.txt, enabled actual editor, selected all, native X11 clipboard pasted unmodified SECURITY.md, blurred, confirmed durable content, closed normally.",
+  "transformation": "None. Metadata JSON and recovery draft are exact application-emitted bytes; original source remained unchanged. Only temporary public-source paths appear in metadata.",
+  "artifacts": [
+    {
+      "name": "teleprompt-state.v2.json",
+      "bytes": 2023,
+      "sha256": "a7c3e3fe03a50320066f059a5a3191e69d6a9abe21a01fbdf22601a69ddda613",
+      "sourceMtime": "2026-09-05T03:17:18.998Z"
+    },
+    {
+      "name": "drafts/5864dd94-1d96-4a18-b275-45cd0239f64d.txt",
+      "bytes": 3971,
+      "sha256": "ca006a2b1533d33cc2d7521430792c3b0179d1467f253701aedae372881a5f6a",
+      "sourceMtime": "2026-09-05T03:17:18.706Z"
+    }
+  ]
+}

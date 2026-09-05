@@ -1,0 +1,63 @@
+{
+	"currentFileIndex": 0,
+	"scrollSpeed": 60,
+	"opacity": 0.85,
+	"bgDim": 0.4,
+	"fontSize": 48,
+	"fontFamily": "Inter, system-ui, sans-serif",
+	"fontColor": "#ffffff",
+	"textShadow": true,
+	"mirrorH": false,
+	"mirrorV": false,
+	"eyeLinePosition": 0.4,
+	"showEyeLine": true,
+	"focusMode": false,
+	"clickThrough": false,
+	"hideFromCapture": false,
+	"voicePacing": false,
+	"markdown": false,
+	"bannerMode": false,
+	"bannerPosition": "bottom",
+	"clickerMode": false,
+	"clickerStep": 0.05,
+	"showChronometer": true,
+	"voiceConsent": false,
+	"countdownEnabled": false,
+	"countdownSeconds": 3,
+	"showCueHud": false,
+	"drivePresentation": false,
+	"aboveFullscreen": false,
+	"targetMode": null,
+	"targetDurationSec": null,
+	"targetWpm": null,
+	"hotkeyBindings": {
+		"play-pause": "CommandOrControl+Alt+Space",
+		"speed-up": "CommandOrControl+Alt+Up",
+		"speed-down": "CommandOrControl+Alt+Down",
+		"opacity-up": "CommandOrControl+Alt+]",
+		"opacity-down": "CommandOrControl+Alt+[",
+		"next-file": "CommandOrControl+Alt+Right",
+		"prev-file": "CommandOrControl+Alt+Left",
+		"toggle-overlay": "CommandOrControl+Alt+H",
+		"toggle-click-through": "CommandOrControl+Alt+T",
+		"restart": "CommandOrControl+Alt+R"
+	},
+	"recentFiles": [
+		"/tmp/teleprompt-public-legacy-v0-gxKaoJ/README.txt"
+	],
+	"overlayBounds": {
+		"x": 100,
+		"y": 100,
+		"width": 900,
+		"height": 600
+	},
+	"controlsBounds": {
+		"x": 100,
+		"y": 750,
+		"width": 900,
+		"height": 400
+	},
+	"filePaths": [
+		"/tmp/teleprompt-public-legacy-v0-gxKaoJ/README.txt"
+	]
+}

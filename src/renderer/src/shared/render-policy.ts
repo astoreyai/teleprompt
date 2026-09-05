@@ -1,7 +1,6 @@
 import type { DocumentFormat } from '../../../shared/contracts'
-import { MAX_VOICE_PACING_CHARS } from '../../../shared/text'
 
-export const MAX_MARKDOWN_RENDER_CHARS = MAX_VOICE_PACING_CHARS
+export const MAX_MARKDOWN_RENDER_CHARS = 500_000
 
 export function shouldRenderMarkdown(
   contentLength: number,

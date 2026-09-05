@@ -15,15 +15,11 @@ export type PersistedSettings = Omit<
   | 'documents'
   | 'activeDocumentId'
   | 'playing'
-  | 'editMode'
-  | 'voicePacing'
   | 'clickerMode'
   | 'drivePresentation'
   | 'playbackSessionId'
   | 'seekGeneration'
   | 'overlayVisible'
-  | 'voiceStatus'
-  | 'voiceError'
 >
 
 export type PersistedDocumentRef = Omit<DocumentMeta, 'saveMode'>
@@ -70,15 +66,11 @@ export function persistedFromSnapshot(snapshot: AppSnapshot): PersistedStateV2 {
     documents,
     activeDocumentId,
     playing: _playing,
-    editMode: _editMode,
-    voicePacing: _voicePacing,
     clickerMode: _clickerMode,
     drivePresentation: _drivePresentation,
     playbackSessionId: _playbackSessionId,
     seekGeneration: _seekGeneration,
     overlayVisible: _overlayVisible,
-    voiceStatus: _voiceStatus,
-    voiceError: _voiceError,
     ...state
   } = snapshot
   return {
@@ -224,7 +216,6 @@ const BOOLEAN_SETTINGS = [
   'markdown',
   'bannerMode',
   'showChronometer',
-  'voiceConsent',
   'countdownEnabled',
   'showCueHud',
   'aboveFullscreen',

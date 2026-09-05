@@ -1,92 +1,87 @@
+import { createHash } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createDefaultSnapshot } from '../../shared/defaults.js'
+import { createWorkspace } from '../domain/workspace.js'
+import { DocumentImportService } from '../documents/import-service.js'
+import { parseDocumentBytes } from '../parser/parser-core.js'
+import { MetadataRepository } from './repositories.js'
 import { parsePersistedState, persistedFromSnapshot } from './schema.js'
 
-describe('persistence schema', () => {
-  it('treats missing state as a clean first launch, not a legacy migration', () => {
-    expect(parsePersistedState(null)).toMatchObject({
-      migrated: false,
-      quarantined: false,
-      issues: [],
-    })
+async function captured(directory: string, name: string) {
+  const provenance = JSON.parse(await readFile(join(directory, 'provenance.json'), 'utf8'))
+  const entry = provenance.artifacts.find((artifact: { name: string }) => artifact.name === name)
+  if (!entry) throw new Error('Captured artifact is missing from provenance')
+  const bytes = await readFile(join(directory, name))
+  expect(bytes.length).toBe(entry.bytes)
+  expect(createHash('sha256').update(bytes).digest('hex')).toBe(entry.sha256)
+  return JSON.parse(bytes.toString('utf8'))
+}
+
+// These files are unmodified output from actual official 0.1.0 and installed1.0.3
+// applications operated with public repository documents in isolated profiles.
+// Unsafe legacy-value normalization and future-version rejection still lack
+// authentic incident inputs; no fabricated settings stand in for those branches.
+describe('persistence schema from actual application output', () => {
+  it('starts clean when the filesystem has no state files', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'teleprompt-schema-absence-'))
+    try {
+      const loaded = await new MetadataRepository({ directory }).load()
+      expect(loaded).toMatchObject({ source: 'default', parsed: { migrated: false, quarantined: false, issues: [] } })
+    } finally { await rm(directory, { recursive: true, force: true }) }
   })
 
-  it('migrates the 0.1.x flat format and clamps unsafe values', () => {
-    const parsed = parsePersistedState({
-      filePaths: ['/tmp/one.txt', '/tmp/two.docx'],
-      currentFileIndex: 1,
-      scrollPosition: 4,
-      opacity: -1,
-      fontSize: 99999,
-      fontColor: 'url(file:///etc/passwd)',
-      controlsBounds: { x: Infinity, y: -Infinity, width: 1, height: 1 },
-      recentFiles: ['/tmp/one.txt', 42, ...Array(20).fill('/tmp/repeated.txt')],
-      playing: true,
-      editMode: true,
-      clickerMode: true,
-      drivePresentation: true,
-    })
-
+  it('migrates the original0.1.0 emitted flatstate and removes obsolete runtime settings', async () => {
+    const path = resolve('test/fixtures/public/legacy-0.1.0')
+    const raw = await captured(path, 'teleprompt-state.json')
+    expect(raw).not.toHaveProperty('version')
+    const parsed = parsePersistedState(raw)
     expect(parsed.migrated).toBe(true)
+    expect(parsed.quarantined).toBe(false)
     expect(parsed.value.version).toBe(2)
-    expect(parsed.value.documentRefs).toHaveLength(2)
-    expect(parsed.value.documentRefs[1]).toMatchObject({
-      sourcePath: '/tmp/two.docx',
-      format: 'docx',
-    })
-    expect(parsed.value.activeDocumentId).toBe(parsed.value.documentRefs[1].id)
-    expect(parsed.value.state).toMatchObject({
-      scrollPosition: 1,
-      opacity: 0.05,
-      fontSize: 400,
-      fontColor: '#ffffff',
-      controlsBounds: { x: 80, y: 80, width: 560, height: 360 },
-    })
-    expect(parsed.value.state).not.toHaveProperty('playing')
-    expect(parsed.value.state).not.toHaveProperty('editMode')
+    expect(parsed.value.documentRefs.map(document => document.sourcePath)).toEqual(raw.filePaths)
+    expect(parsed.value.activeDocumentId).toBe(parsed.value.documentRefs[raw.currentFileIndex].id)
+    for (const key of ['playing', 'editMode', 'voicePacing', 'voiceConsent', 'clickerMode', 'drivePresentation']) {
+      expect(parsed.value.state).not.toHaveProperty(key)
+    }
+    expect(parsed.value.state.fontSize).toBe(raw.fontSize)
+    expect(parsed.value.state.controlsBounds).toEqual(raw.controlsBounds)
+  })
+
+  it('retains real1.0.3 recovered document references while dropping removed voice preferences', async () => {
+    const raw = await captured(resolve('test/fixtures/public/legacy-1.0.3'), 'teleprompt-state.v2.json')
+    expect(raw.state).toHaveProperty('voiceConsent')
+    const parsed = parsePersistedState(raw)
+    expect(parsed).toMatchObject({ migrated: false, quarantined: false })
+    expect(parsed.value.documentRefs).toEqual(raw.documentRefs)
+    expect(parsed.value.documentRefs.some(document => document.dirty)).toBe(true)
+    expect(parsed.value.state).not.toHaveProperty('voiceConsent')
     expect(parsed.value.state).not.toHaveProperty('voicePacing')
-    expect(parsed.value.state).not.toHaveProperty('clickerMode')
-    expect(parsed.value.state).not.toHaveProperty('drivePresentation')
-    expect(parsed.value.state.recentFiles).toHaveLength(2)
   })
 
-  it('rejects unsupported future versions instead of shallow-merging them', () => {
-    const parsed = parsePersistedState({ version: 999, state: { opacity: 0 }, documentRefs: [] })
-    expect(parsed.quarantined).toBe(true)
-    expect(parsed.value.state.opacity).toBe(createDefaultSnapshot().opacity)
-    expect(parsed.issues).toContain('unsupported state version 999')
-  })
-
-  it('persists metadata and drafts by reference, never document content or transient modes', () => {
-    const snapshot = createDefaultSnapshot()
-    snapshot.documents = [
-      {
-        id: 'document-1',
-        name: 'talk.md',
-        sourcePath: null,
-        format: 'markdown',
-        saveMode: 'save-as',
-        revision: 4,
-        dirty: true,
-        sourceMtimeMs: null,
-        sourceHash: null,
-      },
-    ]
-    snapshot.activeDocumentId = 'document-1'
-    snapshot.playing = true
-    snapshot.editMode = true
-    snapshot.voicePacing = true
-    snapshot.clickerMode = true
-    snapshot.drivePresentation = true
-
-    const persisted = persistedFromSnapshot(snapshot)
-    const json = JSON.stringify(persisted)
-    expect(json).not.toContain('content')
-    expect(json).not.toContain('playing')
-    expect(json).not.toContain('editMode')
-    expect(json).not.toContain('voicePacing')
-    expect(json).not.toContain('clickerMode')
-    expect(json).not.toContain('drivePresentation')
-    expect(persisted.documentRefs[0]).toMatchObject({ id: 'document-1', dirty: true })
+  it('persists a genuine imported document by reference and excludes active playback modes', async () => {
+    const importer = new DocumentImportService({
+      parse: (format, bytes, maxOutputChars) => parseDocumentBytes(format, bytes, { maxOutputChars }),
+    })
+    const directory = await mkdtemp(join(tmpdir(), 'teleprompt-schema-current-'))
+    try {
+      const workspace = createWorkspace()
+      const document = workspace.addDocument(await importer.loadPath(resolve('test/fixtures/public/dwi-privacy-notice.docx')))
+      const snapshot = workspace.patchState({ playing: true, clickerMode: true, drivePresentation: true })
+      const persisted = persistedFromSnapshot(snapshot)
+      const repository = new MetadataRepository({ directory })
+      await repository.save(persisted)
+      const raw = JSON.parse(await readFile(repository.path, 'utf8'))
+      expect(raw.documentRefs).toHaveLength(1)
+      expect(raw.documentRefs[0]).toMatchObject({ id: document.id, dirty: false })
+      expect(raw.documentRefs[0]).not.toHaveProperty('content')
+      expect(raw.documentRefs[0]).not.toHaveProperty('saveMode')
+      for (const key of ['playing', 'clickerMode', 'drivePresentation']) expect(raw.state).not.toHaveProperty(key)
+      expect((await repository.load()).parsed.value).toEqual(persisted)
+    } finally {
+      importer.dispose()
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })

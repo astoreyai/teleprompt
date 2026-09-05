@@ -1,0 +1,68 @@
+{
+  "sourceBaseline": "72e5cf859406b8fb32535e2a76293550fe1aedfd",
+  "suiteScope": "31 source-reviewed real-input suites; former editing/voice tests removed with their product features; missing defensive-branch corpus documented separately",
+  "baseline": {
+    "passed": 92,
+    "failed": 0,
+    "skipped": 0
+  },
+  "realUnits": {
+    "numPassedTests": 116,
+    "numFailedTests": 0,
+    "numPendingTests": 0,
+    "success": true
+  },
+  "coverage": {
+    "lines": {
+      "total": 252,
+      "covered": 233,
+      "skipped": 0,
+      "pct": 92.46
+    },
+    "statements": {
+      "total": 301,
+      "covered": 261,
+      "skipped": 0,
+      "pct": 86.71
+    },
+    "functions": {
+      "total": 47,
+      "covered": 41,
+      "skipped": 0,
+      "pct": 87.23
+    },
+    "branches": {
+      "total": 208,
+      "covered": 172,
+      "skipped": 0,
+      "pct": 82.69
+    },
+    "branchesTrue": {
+      "total": 0,
+      "covered": 0,
+      "skipped": 0,
+      "pct": 100
+    }
+  },
+  "coverageThresholds": {
+    "lines": 80,
+    "statements": 80,
+    "functions": 80,
+    "branches": 75
+  },
+  "dependencyVulnerabilities": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0
+  },
+  "coverageScope": [
+    "src/main/domain/**/*.ts",
+    "src/main/files/**/*.ts",
+    "src/main/lifecycle/**/*.ts",
+    "src/shared/**/*.ts"
+  ],
+  "coverageLimit": "Configured coverage excludes test files and renderer files; this is not whole-repository coverage."
+}

@@ -1,0 +1,73 @@
+{
+  "version": 2,
+  "state": {
+    "scrollPosition": 0,
+    "scrollSpeed": 60,
+    "opacity": 0.85,
+    "bgDim": 0.4,
+    "fontSize": 48,
+    "fontFamily": "Inter, system-ui, sans-serif",
+    "fontColor": "#ffffff",
+    "textShadow": true,
+    "mirrorH": false,
+    "mirrorV": false,
+    "eyeLinePosition": 0.4,
+    "showEyeLine": true,
+    "focusMode": false,
+    "clickThrough": false,
+    "hideFromCapture": false,
+    "markdown": false,
+    "bannerMode": false,
+    "bannerPosition": "bottom",
+    "clickerStep": 0.05,
+    "showChronometer": true,
+    "voiceConsent": false,
+    "countdownEnabled": false,
+    "countdownSeconds": 3,
+    "showCueHud": false,
+    "aboveFullscreen": false,
+    "targetMode": null,
+    "targetDurationSec": null,
+    "targetWpm": null,
+    "hotkeyBindings": {
+      "play-pause": "CommandOrControl+Alt+Space",
+      "speed-up": "CommandOrControl+Alt+Up",
+      "speed-down": "CommandOrControl+Alt+Down",
+      "opacity-up": "CommandOrControl+Alt+]",
+      "opacity-down": "CommandOrControl+Alt+[",
+      "next-file": "CommandOrControl+Alt+Right",
+      "prev-file": "CommandOrControl+Alt+Left",
+      "toggle-overlay": "CommandOrControl+Alt+H",
+      "toggle-click-through": "CommandOrControl+Alt+T",
+      "restart": "CommandOrControl+Alt+R"
+    },
+    "recentFiles": [
+      "/tmp/teleprompt-public-legacy-n7l2Rf/README.txt"
+    ],
+    "overlayBounds": {
+      "x": 100,
+      "y": 100,
+      "width": 900,
+      "height": 600
+    },
+    "controlsBounds": {
+      "x": 80,
+      "y": 80,
+      "width": 1100,
+      "height": 760
+    }
+  },
+  "documentRefs": [
+    {
+      "id": "5864dd94-1d96-4a18-b275-45cd0239f64d",
+      "name": "README.txt",
+      "sourcePath": "/tmp/teleprompt-public-legacy-n7l2Rf/README.txt",
+      "format": "text",
+      "revision": 1,
+      "dirty": true,
+      "sourceMtimeMs": 1788578238206.4392,
+      "sourceHash": "e021087b084d55f7b0ec0d61b001d3e3fd4284521f740361e97ae023633af8af"
+    }
+  ],
+  "activeDocumentId": "5864dd94-1d96-4a18-b275-45cd0239f64d"
+}

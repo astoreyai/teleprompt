@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
 import type { AppSnapshot, DocumentId, DocumentRecord } from '../../shared/contracts.js'
-import { MAX_VOICE_PACING_CHARS } from '../../shared/text.js'
 
 export type ControllerStateStore = {
   getSnapshot(): AppSnapshot
@@ -24,9 +23,6 @@ export class AppController {
       playing: true,
       playbackSessionId: sessionId,
       seekGeneration: 0,
-      voicePacing: false,
-      voiceStatus: 'off',
-      voiceError: null,
     })
     return { ok: true, sessionId }
   }
@@ -94,74 +90,5 @@ export class AppController {
         : {}),
     })
     return { ok: true }
-  }
-
-  requestVoice(enabled: boolean):
-    | { ok: true }
-    | { ok: false; reason: 'consent-required' | 'no-document' | 'document-too-large' } {
-    if (!enabled) {
-      this.store.patchState({
-        voicePacing: false,
-        voiceStatus: 'off',
-        voiceError: null,
-      })
-      return { ok: true }
-    }
-    const snapshot = this.store.getSnapshot()
-    if (!snapshot.voiceConsent) return { ok: false, reason: 'consent-required' }
-    const document = this.store.getActiveDocument()
-    if (!document) return { ok: false, reason: 'no-document' }
-    if (document.content.length > MAX_VOICE_PACING_CHARS) {
-      return { ok: false, reason: 'document-too-large' }
-    }
-    this.store.patchState({
-      playing: false,
-      playbackSessionId: null,
-      voicePacing: true,
-      voiceStatus: 'starting',
-      voiceError: null,
-    })
-    return { ok: true }
-  }
-
-  grantVoiceConsent(): AppSnapshot {
-    return this.store.patchState({ voiceConsent: true })
-  }
-
-  revokeVoiceConsent(): AppSnapshot {
-    return this.store.patchState({
-      voiceConsent: false,
-      voicePacing: false,
-      voiceStatus: 'off',
-      voiceError: null,
-    })
-  }
-
-  reportVoiceStatus(
-    status: 'off' | 'starting' | 'active' | 'error',
-    error?: string,
-  ): AppSnapshot {
-    const snapshot = this.store.getSnapshot()
-    const document = this.store.getActiveDocument()
-    const activeTransitionAllowed =
-      snapshot.voiceConsent &&
-      snapshot.voicePacing &&
-      !!document &&
-      document.content.length <= MAX_VOICE_PACING_CHARS
-    if (
-      ((status === 'starting' || status === 'active') && !activeTransitionAllowed) ||
-      (status === 'error' && !snapshot.voicePacing)
-    ) {
-      return this.store.patchState({
-        voicePacing: false,
-        voiceStatus: 'off',
-        voiceError: null,
-      })
-    }
-    return this.store.patchState({
-      voicePacing: status === 'starting' || status === 'active',
-      voiceStatus: status,
-      voiceError: status === 'error' ? (error ?? 'voice recognition failed').slice(0, 500) : null,
-    })
   }
 }

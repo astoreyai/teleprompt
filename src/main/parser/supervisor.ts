@@ -4,6 +4,7 @@ export type ParserWorkerHandle = {
   postMessage(message: unknown): void
   onMessage(listener: (message: unknown) => void): () => void
   onExit(listener: (code: number) => void): () => void
+  onError?(listener: (error: Error) => void): () => void
   kill(): void
 }
 
@@ -27,23 +28,25 @@ export class ParserSupervisor {
     const worker = this.spawn()
     return new Promise<string>((resolve, reject) => {
       let settled = false
+      let outcome: { content: string } | { error: Error } | undefined
       let removeMessage: () => void = () => {}
       let removeExit: () => void = () => {}
+      let removeError: () => void = () => {}
 
       const finish = (result: { content: string } | { error: Error }) => {
-        if (settled) return
-        settled = true
+        if (settled || outcome) return
+        outcome = result
         clearTimeout(timer)
         removeMessage()
-        removeExit()
+        removeError()
         signal?.removeEventListener('abort', onAbort)
         try {
           worker.kill()
         } catch {
           // The utility process may have already exited between response and cleanup.
         }
-        if ('content' in result) resolve(result.content)
-        else reject(result.error)
+        // Settlement releases the import semaphore. Wait for actual exit so a
+        // timed-out or cancelled native parser still counts against capacity.
       }
       const onAbort = () => finish({ error: new Error('parser cancelled') })
       const timer = setTimeout(
@@ -74,9 +77,20 @@ export class ParserSupervisor {
         finish({ error: new Error(errorMessage) })
       })
       removeExit = worker.onExit((code) => {
-        finish({ error: new Error(`parser process exited with code ${code}`) })
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        removeMessage()
+        removeExit()
+        removeError()
+        signal?.removeEventListener('abort', onAbort)
+        const result = outcome ?? { error: new Error(`parser process exited with code ${code}`) }
+        if ('content' in result) resolve(result.content)
+        else reject(result.error)
       })
+      removeError = worker.onError?.(error => finish({ error })) ?? (() => {})
       signal?.addEventListener('abort', onAbort, { once: true })
+      if (signal?.aborted) { onAbort(); return }
       try {
         worker.postMessage({ format, bytes: new Uint8Array(bytes), maxOutputChars })
       } catch (error) {

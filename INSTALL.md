@@ -21,27 +21,27 @@ Every listed artifact must report `OK`. Do not install a package from a bundle w
 ## AppImage
 
 ```bash
-chmod +x Teleprompt-1.0.3-x86_64.AppImage
-./Teleprompt-1.0.3-x86_64.AppImage
+chmod +x Teleprompt-1.1.0-x86_64.AppImage
+./Teleprompt-1.1.0-x86_64.AppImage
 ```
 
 If FUSE is unavailable:
 
 ```bash
-./Teleprompt-1.0.3-x86_64.AppImage --appimage-extract-and-run
+./Teleprompt-1.1.0-x86_64.AppImage --appimage-extract-and-run
 ```
 
 ## Debian package
 
 ```bash
-sudo apt install ./teleprompt_1.0.3_amd64.deb
+sudo apt install ./teleprompt_1.1.0_amd64.deb
 teleprompt
 ```
 
 To replace an existing installation with the same build, use:
 
 ```bash
-sudo apt install --reinstall ./teleprompt_1.0.3_amd64.deb
+sudo apt install --reinstall ./teleprompt_1.1.0_amd64.deb
 ```
 
 Confirm the installed package and verify its managed files:
@@ -57,16 +57,16 @@ No output from `dpkg -V` means the package-managed files match their recorded me
 
 Close Teleprompt before replacing the package. A 0.1.x workspace is migrated on first 1.0 launch while the legacy metadata remains available. Back up `~/.config/teleprompt/` before a major upgrade if it contains irreplaceable drafts.
 
-Downgrading to a pre-1.0 release after schema-v2 state has been written is not supported. Releases 1.0.2 and 1.0.3 share schema v2; reinstalling the saved 1.0.2 package restores its previous behavior, including its crash-cleanup defect. Restore a pre-upgrade user-data backup when returning to a pre-1.0 release.
+Downgrading to a pre-1.0 release after schema-v2 state has been written is not supported. Releases 1.0.3 and 1.1.0 share schema v2. Version 1.1.0 removes editing and voice while preserving old draft bytes. Reinstalling the checksum-verified 1.0.3 package restores its earlier behavior and defects. Restore a pre-upgrade user-data backup when returning to a pre-1.0 release.
 
 ## Tar archive
 
 ```bash
-tar -xzf teleprompt-1.0.3.tar.gz
-./teleprompt-1.0.3/teleprompt
+tar -xzf teleprompt-1.1.0.tar.gz
+./teleprompt-1.1.0/teleprompt
 ```
 
-Confirm the exact directory name with `tar -tzf teleprompt-1.0.3.tar.gz | head` because archive naming can vary by builder version.
+Confirm the exact directory name with `tar -tzf teleprompt-1.1.0.tar.gz | head` because archive naming can vary by builder version.
 
 ## Build from source
 
@@ -80,7 +80,7 @@ npm run check:release
 npm run package
 ```
 
-Full unit and coverage commands currently stop at the real-input qualification guard while seven suites await conversion. The reviewed subset requires genuine local DOCX/PDF inputs and native Crashpad artifacts. Follow [the corpus capture and test commands](docs/audits/2026-09-04/CRASH_CORPUS_QUALIFICATION.md) before running `npm run test:real`.
+Full unit and coverage commands enforce the real-input qualification guard. Public document fixtures with attribution are included under `test/fixtures/public`; native Crashpad artifacts must be captured from an actual runtime. Follow [the corpus capture and test commands](docs/audits/2026-09-04/CRASH_CORPUS_QUALIFICATION.md) before running `npm run test:real`, and consult the [current qualification record](docs/audits/2026-09-05/READ_ONLY_RELEASE.md) for executed gates and limitations.
 
 Artifacts are written to `release/`. To build one format, use `npm run package:appimage` or `npm run package:deb`.
 
@@ -106,7 +106,7 @@ Presentation driving is unavailable on Wayland. Screen-capture protection is una
 The About panel shows the exact state path. On a typical Linux installation it is under `~/.config/teleprompt/` and contains:
 
 - versioned workspace metadata and one backup;
-- private recovery drafts for dirty documents;
+- existing private recovery drafts from earlier versions, retained for reading;
 - quarantined invalid state, if recovery was needed;
 - a bounded local diagnostic log under the Electron logs directory.
 

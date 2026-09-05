@@ -68,8 +68,8 @@ export async function launch(configDirectory: string, documents: string[] = []):
     throw new Error(`Timed out connecting to Teleprompt\n${logs}`)
   }
   const handlePage = (page: Page) => page.on('dialog', (dialog) => {
-    // Electron's will-prevent-unload handler owns this dialog and closes only
-    // after its real editor flush. Playwright must not race it with auto-dismiss.
+    // Electron owns window-close handling and persistence. Playwright must not
+    // race a native beforeunload handler with automatic dialog dismissal.
     if (dialog.type() !== 'beforeunload') throw new Error(`Unexpected JavaScript dialog: ${dialog.type()}`)
   })
   for (const context of browser.contexts()) {

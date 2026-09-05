@@ -1,0 +1,21 @@
+{
+  "sourcePage": "https://svs.gsfc.nasa.gov/12508/",
+  "title": "ATom Postcard - Alaska and the Arctic",
+  "publisher": "NASA Scientific Visualization Studio",
+  "capturedAt": "2026-09-05T03:13:20.104868+00:00",
+  "transformation": "None; unmodified published video captions.",
+  "files": [
+    {
+      "file": "nasa-atom-alaska.srt",
+      "url": "https://svs.gsfc.nasa.gov/vis/a010000/a012500/a012508/ATom1_Alaska.en_US.srt",
+      "bytes": 691,
+      "sha256": "de6aa1f1452ed3d09e57b5f1932f3f6cccbf1519f748d189a5c82b33e0caa34c"
+    },
+    {
+      "file": "nasa-atom-alaska.vtt",
+      "url": "https://svs.gsfc.nasa.gov/vis/a010000/a012500/a012508/ATom1_Alaska.en_US.vtt",
+      "bytes": 702,
+      "sha256": "386224e1ee1c93b4b3705771bdb760e70ec61edb308099a16bdc4de83cb0786c"
+    }
+  ]
+}

@@ -6,7 +6,7 @@ import { parseDocumentBytes } from '../parser/parser-core.js'
 import { projectOverlaySnapshot } from './overlay-projection.js'
 
 describe('overlay read model', () => {
-  it('contains rendering state but no file paths, recent grants, hotkeys, or consent settings', async () => {
+  it('contains rendering state but no file paths, recent grants, or hotkeys', async () => {
     const sourcePath = resolve('README.md')
     const importer = new DocumentImportService({
       parse: (format, bytes, maxOutputChars) => parseDocumentBytes(format, bytes, { maxOutputChars }),
@@ -14,7 +14,7 @@ describe('overlay read model', () => {
     const workspace = createWorkspace()
     const document = workspace.addDocument(await importer.loadPath(sourcePath))
     workspace.selectDocument(document.id)
-    workspace.patchState({ recentFiles: [sourcePath], voiceConsent: true })
+    workspace.patchState({ recentFiles: [sourcePath] })
     const snapshot = workspace.getSnapshot()
     const projected = projectOverlaySnapshot(snapshot)
     expect(projected.activeDocumentMeta).toEqual({ id: document.id, format: document.format, revision: document.revision })
@@ -24,6 +24,5 @@ describe('overlay read model', () => {
     expect(serialized).not.toContain('documents')
     expect(serialized).not.toContain('recentFiles')
     expect(serialized).not.toContain('hotkeyBindings')
-    expect(serialized).not.toContain('voiceConsent')
   })
 })

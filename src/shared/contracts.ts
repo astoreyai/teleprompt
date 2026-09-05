@@ -51,8 +51,6 @@ export type AppSnapshot = {
   playbackSessionId: string | null
   seekGeneration: number
   overlayVisible: boolean
-  voiceStatus: 'off' | 'starting' | 'active' | 'error'
-  voiceError: string | null
   opacity: number
   bgDim: number
   fontSize: number
@@ -66,15 +64,12 @@ export type AppSnapshot = {
   focusMode: boolean
   clickThrough: boolean
   hideFromCapture: boolean
-  voicePacing: boolean
   markdown: boolean
   bannerMode: boolean
   bannerPosition: BannerPosition
-  editMode: boolean
   clickerMode: boolean
   clickerStep: number
   showChronometer: boolean
-  voiceConsent: boolean
   countdownEnabled: boolean
   countdownSeconds: number
   showCueHud: boolean
@@ -118,10 +113,3 @@ export type OverlaySnapshot = Pick<
 > & {
   activeDocumentMeta: OverlayDocumentMeta | null
 }
-
-export type DocumentUpdateResult =
-  | { ok: true; revision: number }
-  | { ok: false; reason: 'not-found' }
-  | { ok: false; reason: 'conflict'; currentRevision: number }
-  | { ok: false; reason: 'too-large' }
-  | { ok: false; reason: 'storage-failed'; error: string }

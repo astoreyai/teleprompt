@@ -4,12 +4,10 @@ import type {
   DocumentId,
   DocumentMeta,
   DocumentRecord,
-  DocumentUpdateResult,
 } from '../../shared/contracts.js'
 import { createDefaultSnapshot } from '../../shared/defaults.js'
 import { createWorkspace, type DocumentWorkspace } from '../domain/workspace.js'
 import type { ImportedDocument } from '../documents/import-service.js'
-import type { DocumentSaveService, SaveDocumentResult } from '../documents/save-service.js'
 import { DraftRepository, MetadataRepository } from '../persistence/repositories.js'
 import { persistedFromSnapshot, type PersistedDocumentRef } from '../persistence/schema.js'
 
@@ -26,6 +24,11 @@ export class AppStore {
   private commandQueue: Promise<unknown> = Promise.resolve()
   private readonly persistDelayMs: number
   private initialized = false
+  private restoring = false
+  private restoration: Promise<void> = Promise.resolve()
+  private restorationCancelled = false
+  private restoredSelection: { id: DocumentId; scrollPosition: number } | null = null
+  private readonly restoredOrder = new Map<string, number>()
   private issues: string[] = []
   private readonly issueListeners = new Set<() => void>()
 
@@ -33,6 +36,7 @@ export class AppStore {
     private readonly options: {
       metadata: MetadataRepository
       drafts: DraftRepository
+      restoreInBackground?: boolean
       persistDelayMs?: number
       workspaceFactory?: () => DocumentWorkspace
     },
@@ -48,53 +52,68 @@ export class AppStore {
     this.workspace = this.createWorkspace()
     this.workspace.restoreSettings(loaded.parsed.value.state)
 
-    for (const reference of loaded.parsed.value.documentRefs) {
+    const references = loaded.parsed.value.documentRefs
+    for (const [index, reference] of references.entries()) {
+      this.unresolved.set(reference.id, reference)
+      this.restoredOrder.set(reference.id, index)
+    }
+    const requestedActive = loaded.parsed.value.activeDocumentId
+    this.restoredSelection = requestedActive
+      ? { id: requestedActive, scrollPosition: loaded.parsed.value.state.scrollPosition }
+      : null
+    const first = references.find(reference => reference.id === requestedActive) ?? references[0]
+    const restore = async (reference: PersistedDocumentRef, background: boolean) => {
+      if (this.restorationCancelled) return
       try {
-        if (reference.dirty) {
-          const content = await this.options.drafts.read(reference.id)
-          if (content === null) throw new Error('recovery draft is missing')
-          this.workspace.addDocument({
-            ...reference,
-            content,
-            dirty: true,
+        const content = reference.dirty
+          ? await this.options.drafts.read(reference.id)
+          : reference.sourcePath ? (await loader.loadPath(reference.sourcePath)) : null
+        if (content === null) throw new Error(reference.dirty ? 'recovery draft is missing' : 'source path is missing')
+        if (this.restorationCancelled) return
+        const input = typeof content === 'string' ? { ...reference, content } : { ...content, id: reference.id, revision: reference.revision }
+        if (background) {
+          await this.enqueue(async () => {
+            if (this.restorationCancelled || this.unresolved.get(reference.id) !== reference) return
+            await this.transact(candidate => candidate.addDocument(input), reference.id)
           })
         } else {
-          if (!reference.sourcePath) throw new Error('source path is missing')
-          const imported = await loader.loadPath(reference.sourcePath)
-          this.workspace.addDocument({
-            ...imported,
-            id: reference.id,
-            revision: reference.revision,
-            dirty: false,
-          })
+          this.workspace.addDocument(input)
+          this.unresolved.delete(reference.id)
         }
       } catch (error) {
-        this.unresolved.set(reference.id, reference)
-        this.issues.push(
-          `${reference.name}: ${error instanceof Error ? error.message : 'unable to restore document'}`,
-        )
+        if (!this.restorationCancelled) {
+          this.issues = [...this.issues, `${reference.name}: ${this.errorMessage(error)}`].slice(-50)
+        }
       }
+      if (background) this.notifyStorageStatus()
     }
-
-    const requestedActive = loaded.parsed.value.activeDocumentId
-    if (
-      !requestedActive ||
-      !this.workspace.restoreActiveDocument(
-        requestedActive,
-        loaded.parsed.value.state.scrollPosition,
-      )
-    ) {
+    if (first) await restore(first, false)
+    if (!requestedActive || !this.workspace.restoreActiveDocument(requestedActive, loaded.parsed.value.state.scrollPosition)) {
       this.workspace.patchState({ scrollPosition: 0, playing: false })
     }
     this.initialized = true
-    if (loaded.parsed.migrated || loaded.parsed.quarantined || this.issues.length > 0) {
-      await this.persistCritical()
-    }
+    const remaining = references.filter(reference => reference !== first)
+    this.restoring = remaining.length > 0
+    this.restoration = (async () => {
+      for (const reference of remaining) {
+        if (this.restorationCancelled) break
+        await restore(reference, !!this.options.restoreInBackground)
+      }
+      this.restoring = false
+      if (loaded.parsed.migrated || loaded.parsed.quarantined || this.issues.length > 0) await this.persistCritical()
+      this.notifyStorageStatus()
+    })().catch(error => {
+      this.restoring = false
+      this.recordStorageFailure(error)
+    })
+    if (!this.options.restoreInBackground) await this.restoration
     return [...this.issues]
   }
 
   getSnapshot(): AppSnapshot {
-    return this.workspace.getSnapshot()
+    const snapshot = this.workspace.getSnapshot()
+    snapshot.documents.sort((a, b) => (this.restoredOrder.get(a.id) ?? Infinity) - (this.restoredOrder.get(b.id) ?? Infinity))
+    return snapshot
   }
 
   getDocument(id: DocumentId): DocumentRecord | null {
@@ -103,6 +122,20 @@ export class AppStore {
 
   getActiveDocument(): DocumentRecord | null {
     return this.workspace.getActiveDocument()
+  }
+
+  getStorageStatus(): { lastPersistedAt: number | null; restoring: boolean } {
+    return { lastPersistedAt: this.options.metadata.lastPersistedAt, restoring: this.restoring }
+  }
+
+  async waitForRestoration(): Promise<void> { await this.restoration }
+
+  cancelRestoration(): void { this.restorationCancelled = true }
+
+  private notifyStorageStatus(): void {
+    for (const listener of this.issueListeners) {
+      try { listener() } catch { /* Notifications do not change persistence outcomes. */ }
+    }
   }
 
   getStorePath(): string {
@@ -131,79 +164,21 @@ export class AppStore {
     }))
   }
 
-  async createDocument(
-    name: string,
-    content: string,
-    format: Extract<DocumentFormat, 'text' | 'markdown' | 'fountain'>,
-  ): Promise<DocumentMeta> {
-    return this.enqueue(async () => {
-      try {
-        return await this.transact(async (candidate) => {
-          const meta = candidate.addDocument({
-            name, sourcePath: null, format, content,
-            sourceMtimeMs: null, sourceHash: null, dirty: true,
-          })
-          candidate.selectDocument(meta.id)
-          await this.options.drafts.write(meta.id, content)
-          return meta
-        })
-      } catch (error) {
-        // A rejected create never publishes an ID, so reclaim its orphan only
-        // after validating that neither metadata copy references it.
-        await this.cleanupDrafts()
-        throw error
-      }
-    })
-  }
-
-  async updateDocument(input: {
-    id: DocumentId
-    expectedRevision: number
-    content: string
-  }): Promise<DocumentUpdateResult> {
-    return this.enqueue(async () => {
-      const validation = this.workspace.validateDocumentUpdate(input)
-      if (!validation.ok) return validation
-      let previousDraft: string | null
-      try {
-        previousDraft = await this.options.drafts.read(input.id)
-      } catch (error) {
-        return { ok: false, reason: 'storage-failed', error: this.recordStorageFailure(error) } as const
-      }
-      let draftWritten = false
-      try {
-        return await this.transact(async (candidate) => {
-          const result = candidate.updateDocument(input)
-          if (!result.ok) throw new Error('document update changed after validation')
-          await this.options.drafts.write(input.id, input.content)
-          draftWritten = true
-          return result
-        })
-      } catch (error) {
-        if (draftWritten) {
-          try {
-            if (previousDraft === null) await this.options.drafts.delete(input.id)
-            else await this.options.drafts.write(input.id, previousDraft)
-          } catch (rollbackError) {
-            this.recordStorageFailure(rollbackError)
-            return { ok: false, reason: 'storage-failed', error: `${this.errorMessage(error)}; recovery draft rollback failed: ${this.errorMessage(rollbackError)}` } as const
-          }
-        }
-        return { ok: false, reason: 'storage-failed', error: this.errorMessage(error) } as const
-      }
-    })
-  }
-
   async removeDocument(
     id: DocumentId,
-    discardDirty: boolean,
   ): Promise<{ ok: true } | { ok: false; reason: 'not-found' | 'dirty' }> {
     return this.enqueue(async () => {
       const document = this.workspace.getDocument(id) ?? this.unresolved.get(id)
       if (!document) return { ok: false, reason: 'not-found' } as const
-      if (document.dirty && !discardDirty) return { ok: false, reason: 'dirty' } as const
+      const snapshot = this.getSnapshot()
+      const visibleIndex = snapshot.documents.findIndex(document => document.id === id)
+      const remaining = snapshot.documents.filter(document => document.id !== id)
+      const successor = snapshot.activeDocumentId === id
+        ? remaining[Math.min(visibleIndex, remaining.length - 1)]?.id
+        : undefined
       return this.transact((candidate) => {
         candidate.removeDocument(id)
+        if (successor) candidate.selectDocument(successor)
         return { ok: true } as const
       }, id)
     })
@@ -227,80 +202,14 @@ export class AppStore {
     return snapshot
   }
 
-  async markSaved(input: {
-    id: DocumentId
-    sourcePath: string
-    format: DocumentFormat
-    sourceMtimeMs: number
-    sourceHash: string
-  }): Promise<boolean> {
-    return this.enqueue(async () => {
-      if (!this.workspace.getDocument(input.id)) return false
-      return this.transact((candidate) => {
-        candidate.markSaved(input)
-        this.pushRecent(input.sourcePath, candidate)
-        return true
-      })
-    })
-  }
-
-  async saveDocument(
-    id: DocumentId,
-    service: DocumentSaveService,
-    requestedTargetPath?: string,
-  ): Promise<SaveDocumentResult | { ok: false; reason: 'not-found' } | {
-    ok: false; reason: 'storage-failed'; sourceSaved: true; currentRevision: number; error: string; targetPath: string
-  }> {
-    return this.enqueue(async () => {
-      const document = this.workspace.getDocument(id)
-      if (!document) return { ok: false, reason: 'not-found' } as const
-      // Retain recovery bytes before the irreversible source write starts.
-      try {
-        await this.options.drafts.write(id, document.content)
-      } catch (error) {
-        this.recordStorageFailure(error)
-        return { ok: false, reason: 'write-failed', error: this.errorMessage(error) } as const
-      }
-      const result = await service.save(document, requestedTargetPath)
-      if (!result.ok) return result
-      try {
-        await this.transact((candidate) => {
-          candidate.markSaved({
-            id, sourcePath: result.targetPath, format: result.format,
-            sourceMtimeMs: result.sourceMtimeMs, sourceHash: result.sourceHash,
-          })
-          this.pushRecent(result.targetPath, candidate)
-        })
-        return result
-      } catch (error) {
-        // The source already changed. Publish its current identity so retry can
-        // verify it, while keeping the document dirty and its recovery draft.
-        this.workspace.markSaved({
-          id, sourcePath: result.targetPath, format: result.format,
-          sourceMtimeMs: result.sourceMtimeMs, sourceHash: result.sourceHash,
-        })
-        this.workspace.retainDraft(id)
-        this.pushRecent(result.targetPath)
-        this.schedulePersist()
-        return {
-          ok: false, reason: 'storage-failed', sourceSaved: true,
-          currentRevision: document.revision, targetPath: result.targetPath,
-          error: this.errorMessage(error),
-        } as const
-      }
-    })
-  }
-
   async reloadDocument(
     id: DocumentId,
-    discardDirty: boolean,
     loader: DocumentLoader,
   ): Promise<{ ok: true; document: DocumentMeta } | { ok: false; reason: string }> {
     return this.enqueue(async () => {
       const document = this.workspace.getDocument(id)
       const unresolved = this.unresolved.get(id)
       if (!document && !unresolved) return { ok: false, reason: 'not-found' } as const
-      if (document?.dirty && !discardDirty) return { ok: false, reason: 'dirty' } as const
       try {
         return await this.transact(async (candidate) => {
           if (unresolved) {
@@ -330,12 +239,8 @@ export class AppStore {
       documents: _documents,
       activeDocumentId: _active,
       playing: _playing,
-      editMode: _edit,
-      voicePacing: _voice,
       playbackSessionId: _session,
       overlayVisible: _overlayVisible,
-      voiceStatus: _voiceStatus,
-      voiceError: _voiceError,
       ...settings
     } = defaults
     const snapshot = this.workspace.restoreSettings(settings)
@@ -345,6 +250,7 @@ export class AppStore {
   }
 
   async flush(): Promise<void> {
+    await this.restoration
     if (this.persistTimer) {
       clearTimeout(this.persistTimer)
       this.persistTimer = null
@@ -379,13 +285,21 @@ export class AppStore {
 
   private async persistNow(workspace = this.workspace, resolvedId?: DocumentId): Promise<void> {
     const value = persistedFromSnapshot(workspace.getSnapshot())
+    // Closing before the first read finishes must not erase the user's saved
+    // selection/checkpoint while all its document references remain unresolved.
+    if (this.restorationCancelled && !value.activeDocumentId && this.restoredSelection &&
+      this.unresolved.has(this.restoredSelection.id) && resolvedId !== this.restoredSelection.id) {
+      value.activeDocumentId = this.restoredSelection.id
+      value.state.scrollPosition = this.restoredSelection.scrollPosition
+    }
     value.documentRefs.push(...[...this.unresolved.values()].filter((reference) => reference.id !== resolvedId))
+    value.documentRefs.sort((a, b) => (this.restoredOrder.get(a.id) ?? Infinity) - (this.restoredOrder.get(b.id) ?? Infinity))
     if (value.documentRefs.length > 100) throw new Error('document limit reached')
     this.persistQueue = this.persistQueue
       .catch(() => undefined)
       .then(() => this.options.metadata.save(value))
     await this.persistQueue
-    await this.cleanupDrafts()
+    this.notifyStorageStatus()
   }
 
   private clearPersistTimer(): void {
@@ -414,17 +328,6 @@ export class AppStore {
       throw error
     } finally {
       this.candidate = null
-    }
-  }
-
-  private async cleanupDrafts(): Promise<void> {
-    try {
-      const referenced = await this.options.metadata.referencedDraftIds()
-      // An unresolved draft is retained even if metadata currently cannot name it.
-      for (const reference of this.unresolved.values()) if (reference.dirty) referenced.add(reference.id)
-      await this.options.drafts.cleanup(referenced)
-    } catch (error) {
-      this.recordStorageFailure(error)
     }
   }
 
