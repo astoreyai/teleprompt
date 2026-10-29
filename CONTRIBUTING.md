@@ -32,8 +32,8 @@ Tests belong beside the boundary they protect:
 - `AppSnapshot` must remain free of document bodies.
 - Send active content separately and only when selection or revision changes.
 - Identify every document command by stable ID and expected revision.
-- Persist a draft before acknowledging an edit; persist its metadata reference before returning.
-- Never overwrite a lossy import format. Use Save As.
+- Adopt playlist mutations only after metadata persistence succeeds; retain existing legacy draft bytes.
+- All source documents are read-only. Reload through the bounded importer; never add source writes.
 - Route every document path through `DocumentImportService`.
 - Keep parsers bounded and outside the main process.
 - Add IPC channels to the typed role API and the authorization manifest together.
@@ -49,11 +49,13 @@ npm run test:soak
 npm run package
 ```
 
-Linux packaged tests require `xvfb-run`. The scripts disable core dumps because the recovery test intentionally crashes a renderer.
+Linux packaged tests require `xvfb-run`, `xdotool`, `dbus-run-session`, and a file-chooser portal. The runner isolates the display, session bus, and runtime directory. The scripts disable core dumps because the recovery test intentionally crashes a renderer.
 
 To run the same process-boundary suite against an installed package instead of `release/linux-unpacked`, set the executable explicitly:
 
 ```bash
 TELEPROMPT_E2E_EXECUTABLE=/opt/Teleprompt/teleprompt \
-  xvfb-run -a sh -c 'ulimit -c 0; npx playwright test'
+  npm run test:e2e
 ```
+
+The real-input variables and native crash corpus are required; follow the README and crash-corpus qualification instructions. To retain measured stress evidence, set `TELEPROMPT_STRESS_REPORT` to a project-local JSON path before `npm run test:stress`. Stress inputs are unmodified repository and installed TypeScript files; never substitute generated documents.

@@ -201,16 +201,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
   })
 
   secureHandle('preferences:update', dependencies, (_event, raw) => {
-    const before = dependencies.store.getSnapshot()
-    const patch = sanitizePreferencePatch(raw)
-    const after = dependencies.store.patchState(patch)
-    dependencies.pacing.applyTarget()
-    if (patch.aboveFullscreen !== undefined && patch.aboveFullscreen !== before.aboveFullscreen) {
-      recreateOverlay()
-    }
-    applyOverlayEffects()
-    broadcastSnapshot(dependencies.store.getSnapshot())
-    return after
+    return applyPreferences(dependencies, sanitizePreferencePatch(raw))
   })
 
   secureHandle('preferences:reset', dependencies, () => {
@@ -263,7 +254,7 @@ export function registerIpc(dependencies: IpcDependencies): void {
       const record = requireRecord(raw)
       if (record.version !== 1) return { ok: false, error: 'unsupported preference version' }
       const patch = sanitizePreferencePatch(record.preferences)
-      dependencies.store.patchState(patch)
+      applyPreferences(dependencies, patch)
       const bindings = sanitizeHotkeys(record.hotkeyBindings)
       if (bindings) dependencies.hotkeys.rebind(bindings)
       applyOverlayEffects()
@@ -477,6 +468,19 @@ async function importOne(dependencies: IpcDependencies, path: string) {
   } catch (error) {
     return { ok: false, error: formatError(error) } as const
   }
+}
+
+function applyPreferences(dependencies: IpcDependencies, patch: PreferencePatch): ReturnType<AppStore['getSnapshot']> {
+  const before = dependencies.store.getSnapshot()
+  dependencies.store.patchState(patch)
+  dependencies.pacing.applyTarget()
+  if (patch.aboveFullscreen !== undefined && patch.aboveFullscreen !== before.aboveFullscreen) {
+    recreateOverlay()
+  }
+  applyOverlayEffects()
+  const snapshot = dependencies.store.getSnapshot()
+  broadcastSnapshot(snapshot)
+  return snapshot
 }
 
 function publish(dependencies: IpcDependencies, includeDocument: boolean): void {

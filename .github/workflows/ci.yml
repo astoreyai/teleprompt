@@ -39,7 +39,7 @@ jobs:
       - name: Install Linux runtime libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xclip xdotool x11-utils libgtk-3-0 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 libatspi2.0-0
+          sudo apt-get install -y dbus-daemon xdg-desktop-portal-gtk xvfb xclip xdotool x11-utils libgtk-3-0 libnss3 libxss1 libxtst6 libasound2t64 libgbm1 libdrm2 libatspi2.0-0
 
       - name: Install locked dependencies
         run: npm ci

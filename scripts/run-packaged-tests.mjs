@@ -3,7 +3,8 @@ import { mkdtemp, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
-const environment = { ...process.env }
+// Keep native file dialogs and portal services inside the test desktop.
+const environment = { ...process.env, XDG_RUNTIME_DIR: await mkdtemp(join(tmpdir(), 'teleprompt-runtime-')) }
 if (!environment.TELEPROMPT_REAL_DOCX || !environment.TELEPROMPT_REAL_PDF) {
   throw new Error('Packaged tests require TELEPROMPT_REAL_DOCX and TELEPROMPT_REAL_PDF to name genuine local documents')
 }
@@ -28,5 +29,5 @@ if (!environment.TELEPROMPT_E2E_EXECUTABLE) {
   process.stdout.write(`Retained review artifact: ${output}\n`)
 }
 run(process.execPath, ['scripts/verify-artifact.mjs', dirname(resolve(environment.TELEPROMPT_E2E_EXECUTABLE))])
-run('xvfb-run', ['-a', 'sh', '-c', 'ulimit -c 0; export TELEPROMPT_TEST_DISPLAY="$DISPLAY"; exec "$@"', 'teleprompt-tests',
+run('xvfb-run', ['-a', 'dbus-run-session', '--', 'sh', '-c', 'ulimit -c 0; export TELEPROMPT_TEST_DISPLAY="$DISPLAY"; exec "$@"', 'teleprompt-tests',
   resolve('node_modules/.bin/playwright'), 'test', ...process.argv.slice(2)])

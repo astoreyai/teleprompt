@@ -2,7 +2,7 @@
 
 Teleprompt reads local files and plays them in a transparent, always-on-top overlay for Linux x64. A separate operator window provides a file playlist, read-only preview, paced scrolling, cue points, appearance settings, and X11 presentation controls. There is no document editor or voice recognition.
 
-Version 1.0 is intentionally released and verified for Linux x64. Windows and macOS are not current release targets.
+The current 1.1 release line targets Linux x64. Windows and macOS are not current release targets.
 
 ## Install a release
 
@@ -10,7 +10,7 @@ Download an AppImage, Debian package, or tar archive together with `SHA256SUMS.t
 
 ```bash
 sha256sum --check SHA256SUMS.txt
-sudo apt install ./teleprompt_1.1.0_amd64.deb
+sudo apt install ./teleprompt_1.1.1_amd64.deb
 ```
 
 See [INSTALL.md](INSTALL.md) for portable formats, upgrades, local data, platform constraints, and troubleshooting.
@@ -43,9 +43,15 @@ Playlist changes are committed to private metadata with a backup. Settings are s
 
 Source documents are re-read through the same bounded importer. Old recovered scripts restore from their matching draft. Removing or reloading a recovered item preserves its old draft bytes on disk. Playback, clicker arming, and presentation arming always restart off.
 
+## Release qualification
+
+Version 1.1.1 fixes imported playback and overlay settings, surfaces capability initialization errors, and updates security dependencies. See [the qualification record](docs/PRODUCTION_READINESS.md) for executed tests and remaining native desktop checks. Teleprompt runs directly on Linux; Docker is not required.
+
 ## Verification loop
 
 ```bash
+export TELEPROMPT_REAL_DOCX="$PWD/test/fixtures/public/dwi-privacy-notice.docx"
+export TELEPROMPT_REAL_PDF="$PWD/test/fixtures/public/us-constitution.pdf"
 npm run typecheck
 npm run test:real
 npm run build

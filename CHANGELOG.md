@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1 — 2026-10-28
+
+- Apply imported preference changes to playback pacing and overlay window construction immediately.
+- Return the final calculated playback state from preference updates and surface capability-status errors.
+- Update Electron, DOMPurify, Vite, Vitest, and vulnerable transitive dependencies.
+- Exercise native preference import with genuine application state and isolate native test portals from the desktop session.
+- Correct the read-only release checklist and document current qualification and limitations.
+
 ## 1.1.0 — 2026-09-05
 
 - Read and play local files with a bounded operator preview and the existing playback, appearance, cue, shortcut, and presentation settings.

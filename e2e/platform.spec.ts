@@ -63,7 +63,7 @@ test('an actually unresponsive renderer recovers with its real document', async 
   try {
     let controls = await surface(application, 'controls')
     const overlay = await surface(application, 'overlay')
-    expect(await overlay.evaluate(() => document.readyState)).toBe('complete')
+    await overlay.waitForLoadState('load')
     await expect.poll(async () => (await controls.evaluate(() => window.controlsApi.bootstrap())).activeDocument?.content).toBe(readme)
     const session = await controls.context().newCDPSession(controls)
     // Fault injection stalls the actual renderer thread; no event or runtime API is replaced.
@@ -101,6 +101,50 @@ test('an actually unresponsive renderer recovers with its real document', async 
     await test.info().attach('native-hang-log', { body: log, contentType: 'text/plain' })
     await stop(application).catch(() => undefined)
     if (application.process.exitCode === null) application.process.kill('SIGKILL')
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('native preference import recalculates pacing and recreates the overlay', async () => {
+  test.setTimeout(90_000)
+  const directory = await mkdtemp(join(tmpdir(), 'teleprompt-preference-import-'))
+  const source = join(directory, 'README.txt')
+  await writeFile(source, readme)
+  const application = await launch(directory, [source])
+  try {
+    const controls = await surface(application, 'controls')
+    const overlay = await surface(application, 'overlay')
+    await expect(overlay.locator('.overlay__text')).toContainText('Teleprompt')
+    const current = (await controls.evaluate(() => window.controlsApi.bootstrap())).snapshot
+    // Capture actual application preferences; change only the settings under test.
+    const path = join(directory, 'preferences.json')
+    await writeFile(path, JSON.stringify({ version: 1, preferences: {
+      ...current, targetMode: 'duration', targetDurationSec: 120,
+      aboveFullscreen: !current.aboveFullscreen,
+    }, hotkeyBindings: current.hotkeyBindings }))
+    const imported = controls.evaluate(() => window.controlsApi.importPreferences())
+    let dialog = ''
+    await expect.poll(() => {
+      try { dialog = native('xdotool', 'search', '--onlyvisible', '--name', 'Import Teleprompt preferences|Open File|Open').split('\n')[0] }
+      catch { dialog = '' }
+      return dialog
+    }, { timeout: 60_000 }).not.toBe('')
+    native('xdotool', 'windowfocus', '--sync', dialog)
+    native('xdotool', 'key', '--clearmodifiers', 'ctrl+l')
+    native('xdotool', 'type', '--clearmodifiers', path)
+    native('xdotool', 'key', '--clearmodifiers', 'Return')
+    await controls.waitForTimeout(300)
+    native('xdotool', 'key', '--clearmodifiers', 'Return')
+    expect(await imported).toEqual({ ok: true })
+    await expect.poll(() => overlay.isClosed()).toBe(true)
+    const replacement = await recoveredSurface(application, 'overlay')
+    await expect(replacement.locator('.overlay__text')).toContainText('Teleprompt')
+    const range = await replacement.locator('.overlay__text').evaluate(element =>
+      Math.max(0, element.scrollHeight - element.parentElement!.clientHeight))
+    await expect.poll(async () => (await controls.evaluate(() => window.controlsApi.bootstrap())).snapshot.scrollSpeed)
+      .toBeCloseTo(Math.max(1, Math.min(2000, range / 120)), 0)
+  } finally {
+    await stop(application).catch(() => undefined)
     await rm(directory, { recursive: true, force: true })
   }
 })

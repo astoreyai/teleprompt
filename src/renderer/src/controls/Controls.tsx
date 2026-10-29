@@ -88,9 +88,9 @@ export function Controls() {
       .catch((error: unknown) => {
         setFatalError(error instanceof Error ? error.message : 'Controls failed to initialize')
       })
-    void window.controlsApi.getPlatformInfo().then(setPlatform).catch(() => undefined)
-    void window.controlsApi.getPresentationStatus().then(setPresentation).catch(() => undefined)
-    void window.controlsApi.getHotkeyStatus().then((status) => setFailedHotkeys(status.failed)).catch(() => undefined)
+    void window.controlsApi.getPlatformInfo().then(setPlatform).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Capability status could not be loaded'))
+    void window.controlsApi.getPresentationStatus().then(setPresentation).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Capability status could not be loaded'))
+    void window.controlsApi.getHotkeyStatus().then((status) => setFailedHotkeys(status.failed)).catch((error: unknown) => showToast(error instanceof Error ? error.message : 'Capability status could not be loaded'))
 
     return () => {
       unsubscribeClosing()

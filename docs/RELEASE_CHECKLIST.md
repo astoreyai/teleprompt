@@ -16,14 +16,14 @@
 ## Manual product smoke test
 
 - [ ] Open and restore a text file, Markdown file, DOCX/ODT, and text PDF.
-- [ ] Confirm PDF/DOCX/ODT Save opens Save As and leaves the source byte-identical.
-- [ ] Externally edit a loaded text file, then confirm Teleprompt refuses overwrite and Save a copy works.
-- [ ] Create an unsaved document, terminate the process, relaunch, and confirm the exact draft restores paused.
+- [ ] Confirm imports, playback, reload, and restart leave every source byte-identical.
+- [ ] Externally edit a loaded text file, choose Reload source, and confirm the updated text appears.
+- [ ] Restore a genuine legacy recovery profile; confirm its draft is readable, playback is paused, and removing the item preserves draft bytes.
 - [ ] Exercise play/pause/restart, duration target, WPM target, manual speed, cues, countdown, mirror modes, banner, focus mode, and click-through.
 - [ ] Verify controls remain operable at 560×360 and with keyboard-only navigation.
 - [ ] Verify all global shortcut failures are surfaced rather than silently ignored.
 - [ ] On X11 with `xdotool`, arm presentation drive and confirm it sends only the documented left/right actions.
-- [ ] Grant, exercise, stop, and revoke voice pacing; confirm the status is visible and it remains off after restart.
+- [ ] Confirm microphone permission is denied and no editor, source-save, or voice controls are exposed.
 - [ ] Confirm Linux capture-protection limitation and Wayland limitation text are visible and accurate.
 
 ## Distribution

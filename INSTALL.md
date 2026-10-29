@@ -70,7 +70,7 @@ Confirm the exact directory name with `tar -tzf teleprompt-1.1.0.tar.gz | head` 
 
 ## Build from source
 
-Requirements are Node.js 22.12 or newer, npm, and standard Linux Electron build libraries.
+Requirements are Node.js 22.12 or newer, npm, and standard Linux Electron build libraries. Native acceptance also requires Xvfb, xdotool, dbus-run-session (the dbus-daemon package on Debian/Ubuntu), and a file-chooser portal such as xdg-desktop-portal-gtk. The test runner isolates its display, session bus, and runtime directory.
 
 ```bash
 git clone https://github.com/astoreyai/teleprompt.git
@@ -88,7 +88,7 @@ The packaged E2E suite can also validate an installed or manually extracted bina
 
 ```bash
 TELEPROMPT_E2E_EXECUTABLE=/opt/Teleprompt/teleprompt \
-  xvfb-run -a sh -c 'ulimit -c 0; npx playwright test'
+  npm run test:e2e
 ```
 
 ## Optional integration
