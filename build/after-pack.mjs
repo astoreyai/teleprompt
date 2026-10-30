@@ -1,3 +1,4 @@
+import { chmod } from 'node:fs/promises'
 import { join } from 'node:path'
 import { flipFuses, FuseVersion, FuseV1Options } from '@electron/fuses'
 
@@ -10,6 +11,10 @@ export default async function hardenPackagedElectron(context) {
     context.electronPlatformName === 'linux'
       ? context.packager.executableName
       : context.packager.appInfo.productFilename
+  if (context.electronPlatformName === 'linux') {
+    // Electron archives may extract this helper as world-writable.
+    await chmod(join(context.appOutDir, 'chrome-sandbox'), 0o755)
+  }
   const executablePath = join(context.appOutDir, `${executableName}${extension}`)
   await flipFuses(executablePath, {
     version: FuseVersion.V1,
