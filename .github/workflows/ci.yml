@@ -62,6 +62,9 @@ jobs:
         run: |
           packaged_executable="$(realpath release/linux-unpacked/teleprompt)"
           development_executable="$(node -p 'require("electron")')"
+          # Match the packaged helper normalization without enabling setuid.
+          chmod 755 "$(dirname "$development_executable")/chrome-sandbox"
+          stat -c '%a %U %n' release/linux-unpacked/chrome-sandbox "$(dirname "$development_executable")/chrome-sandbox"
           # Permit user namespaces only for the two tested executables. Keep the
           # runner-wide AppArmor restriction and Chromium seccomp sandbox enabled.
           # https://ubuntu.com/blog/ubuntu-23-10-restricted-unprivileged-user-namespaces
